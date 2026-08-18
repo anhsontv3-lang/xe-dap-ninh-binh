@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Plugin version, for example 2.5.2'
+        description: 'Plugin version, for example 2.6.0'
         required: true
-        default: '2.5.2'
+        default: '2.6.0'
 
 permissions:
   contents: write
@@ -39,17 +39,12 @@ jobs:
           sed -i -E "s/const VERSION = '[^']+';/const VERSION = '${VERSION}';/" "$MAIN"
           sed -i -E "s/V[0-9]+\.[0-9]+\.[0-9]+/V${VERSION}/g" "$MAIN"
 
-          # Package must contain the plugin directory at ZIP root.
           cd build
           zip -r "../xe-dap-ninh-binh-v${VERSION}.zip" xe-dap-ninh-binh >/dev/null
           cd ..
 
           test -f "xe-dap-ninh-binh-v${VERSION}.zip"
-
-          # Fail the release if the package does not contain the main plugin file.
           unzip -l "xe-dap-ninh-binh-v${VERSION}.zip" | grep -q "xe-dap-ninh-binh/xe-dap-ninh-binh.php"
-
-          # Verify the version that will actually be installed.
           unzip -p "xe-dap-ninh-binh-v${VERSION}.zip" "xe-dap-ninh-binh/xe-dap-ninh-binh.php" | grep -E "^ \* Version: ${VERSION}|const VERSION = '${VERSION}'"
 
       - name: Create GitHub release
@@ -62,5 +57,5 @@ jobs:
           git push -f origin "v${VERSION}"
           gh release create "v${VERSION}" "xe-dap-ninh-binh-v${VERSION}.zip" \
             --title "XE DAP NINH BINH v${VERSION}" \
-            --notes "## XE DAP NINH BINH v${VERSION}\n\n- Hiển thị bộ đếm nhập sản phẩm màu xanh ở đầu trang.\n- Đếm riêng sản phẩm tạo thành công, sản phẩm bỏ qua và lỗi trong quá trình nhập.\n- Tích hợp luồng AI SEO trong importer.\n- AI chỉ viết lại nội dung; dữ liệu giá, SKU, thuộc tính, variation và ảnh lấy từ nguồn.\n- Sản phẩm nhập mới mặc định ở trạng thái Draft.\n- Lưu URL nguồn để chống nhập trùng.\n- Đóng gói ZIP đúng cấu trúc cho WordPress.\n- Tiếp tục hỗ trợ cập nhật từ GitHub." \
+            --notes "## XE DAP NINH BINH v${VERSION}\n\n- Tự động thêm liên kết nội bộ SEO.\n- Tự động tạo phần Thông số kỹ thuật sản phẩm.\n- Lấy thông số từ dữ liệu sản phẩm nguồn, không để AI tự đoán.\n- Hỗ trợ sản phẩm có biến thể, màu sắc và kích thước.\n- Giữ cơ chế chống nhập trùng theo URL nguồn.\n- AI chỉ viết lại nội dung SEO; không tự thay đổi giá, SKU hoặc dữ liệu biến thể.\n- Đóng gói ZIP đúng cấu trúc WordPress." \
             --latest
