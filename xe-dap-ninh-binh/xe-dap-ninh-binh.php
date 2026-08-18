@@ -3,7 +3,7 @@
  * Plugin Name: XE DAP NINH BINH
  * Plugin URI: https://xedapninhbinh.com
  * Description: Quét sản phẩm từ website nguồn, xem trước danh sách, lấy ảnh/thông tin và tạo sản phẩm WooCommerce; hỗ trợ viết lại nội dung bằng OpenAI.
- * Version: 2.1.0
+ * Version: 2.2.0
  * Update URI: https://github.com/anhsontv3-lang/xe-dap-ninh-binh
  * Author: Xe Đạp Ninh Bình
  * Requires at least: 6.0
@@ -13,7 +13,7 @@
 if (!defined('ABSPATH')) exit;
 
 class XDN_AI_Product_Importer_V2 {
-    const VERSION = '2.1.0';
+    const VERSION = '2.2.0';
     const GITHUB_REPO = 'anhsontv3-lang/xe-dap-ninh-binh';
     const OPT_KEY = 'xdn_ai_importer_options';
     const NONCE = 'xdn_ai_importer_nonce';
@@ -23,321 +23,49 @@ class XDN_AI_Product_Importer_V2 {
         add_action('admin_enqueue_scripts', [$this, 'admin_assets']);
         add_action('wp_ajax_xdn_scan_source', [$this, 'ajax_scan_source']);
         add_action('wp_ajax_xdn_import_products', [$this, 'ajax_import_products']);
-
-        // GitHub updater: WordPress will show the normal "Update now" notice.
         add_filter('pre_set_site_transient_update_plugins', [$this, 'check_for_plugin_update']);
         add_filter('plugins_api', [$this, 'plugin_info'], 10, 3);
         add_action('upgrader_process_complete', [$this, 'clear_update_cache'], 10, 2);
         add_action('admin_post_xdn_check_update', [$this, 'manual_update_check']);
     }
+    private function plugin_basename(){return plugin_basename(__FILE__);}
+    private function github_latest_release($force=false){$key='xdn_github_latest_release';if(!$force){$c=get_site_transient($key);if(is_array($c))return $c;}$r=wp_remote_get('https://api.github.com/repos/'.self::GITHUB_REPO.'/releases/latest',['timeout'=>12,'headers'=>['Accept'=>'application/vnd.github+json','User-Agent'=>'XE-DAP-NINH-BINH-WordPress/'.self::VERSION]]);if(is_wp_error($r)||wp_remote_retrieve_response_code($r)!==200)return [];$d=json_decode(wp_remote_retrieve_body($r),true);if(!is_array($d)||empty($d['tag_name']))return [];$package='';foreach(($d['assets']??[]) as $a){if(!empty($a['browser_download_url'])&&preg_match('/\.zip$/i',(string)($a['name']??''))){$package=$a['browser_download_url'];break;}}if(!$package&&!empty($d['zipball_url']))$package=$d['zipball_url'];$out=['version'=>sanitize_text_field(ltrim((string)$d['tag_name'],'vV ')),'package'=>esc_url_raw($package),'url'=>esc_url_raw($d['html_url']??('https://github.com/'.self::GITHUB_REPO)),'body'=>wp_kses_post($d['body']??'')];set_site_transient($key,$out,6*HOUR_IN_SECONDS);return $out;}
+    public function check_for_plugin_update($t){if(!is_object($t)||empty($t->checked))return $t;$r=$this->github_latest_release(false);if(empty($r['version'])||empty($r['package'])||version_compare(self::VERSION,$r['version'],'>='))return $t;$t->response[$this->plugin_basename()]=(object)['id'=>'https://github.com/'.self::GITHUB_REPO,'slug'=>dirname($this->plugin_basename()),'plugin'=>$this->plugin_basename(),'new_version'=>$r['version'],'url'=>$r['url'],'package'=>$r['package'],'icons'=>[],'tested'=>get_bloginfo('version'),'requires_php'=>'7.4'];return $t;}
+    public function plugin_info($result,$action,$args){if($action!=='plugin_information'||empty($args->slug)||$args->slug!==dirname($this->plugin_basename()))return $result;$r=$this->github_latest_release(false);if(empty($r['version']))return $result;return(object)['name'=>'XE DAP NINH BINH','slug'=>dirname($this->plugin_basename()),'version'=>$r['version'],'author'=>'<a href="https://xedapninhbinh.com">Xe Đạp Ninh Bình</a>','homepage'=>'https://github.com/'.self::GITHUB_REPO,'download_link'=>$r['package'],'sections'=>['description'=>'WooCommerce AI Product Importer cho Xe Đạp Ninh Bình.','changelog'=>nl2br($r['body'])]];}
+    public function clear_update_cache($u,$o){if(($o['action']??'')==='update'&&($o['type']??'')==='plugin'){delete_site_transient('xdn_github_latest_release');delete_site_transient('update_plugins');}}
+    public function manual_update_check(){if(!current_user_can('manage_woocommerce'))wp_die('Không có quyền.');check_admin_referer('xdn_check_update');delete_site_transient('xdn_github_latest_release');delete_site_transient('update_plugins');wp_update_plugins();wp_safe_redirect(admin_url('admin.php?page=xdn-ai-importer&xdn_update_checked=1'));exit;}
+    public function admin_menu(){add_menu_page('XE DAP NINH BINH','XE DAP NINH BINH','manage_woocommerce','xdn-ai-importer',[$this,'admin_page'],'dashicons-cart',56);}
+    public function admin_assets($hook){if($hook==='toplevel_page_xdn-ai-importer')wp_enqueue_style('dashicons');}
+    private function opts(){return wp_parse_args(get_option(self::OPT_KEY,[]),['api_key'=>'','model'=>'gpt-5-mini','default_category'=>0]);}
+    private function save_opts(){check_admin_referer('xdn_save_settings');update_option(self::OPT_KEY,['api_key'=>trim(sanitize_text_field(wp_unslash($_POST['api_key']??''))),'model'=>sanitize_text_field(wp_unslash($_POST['model']??'gpt-5-mini')),'default_category'=>absint($_POST['default_category']??0)]);}
+    public function admin_page(){if(!current_user_can('manage_woocommerce'))return;if(isset($_POST['xdn_save'])){$this->save_opts();echo'<div class="notice notice-success"><p>Đã lưu cấu hình.</p></div>';}$o=$this->opts();$cats=get_terms(['taxonomy'=>'product_cat','hide_empty'=>false]);$latest=$this->github_latest_release(false);$update=wp_nonce_url(admin_url('admin-post.php?action=xdn_check_update'),'xdn_check_update');?>
+<div class="wrap"><h1>XE DAP NINH BINH – AI Product Importer <span style="font-size:12px;color:#777">V2.2.0</span></h1><div style="background:#fff;border:1px solid #ddd;padding:12px 16px;margin:12px 0;max-width:1100px"><b>Phiên bản:</b> <?php echo esc_html(self::VERSION); ?> <span style="color:#087f23">Đã cập nhật bộ quét V2.2.</span> <a class="button" href="<?php echo esc_url($update); ?>">Kiểm tra cập nhật</a> <a class="button" target="_blank" href="https://github.com/<?php echo esc_attr(self::GITHUB_REPO); ?>">GitHub</a></div>
+<div style="background:#fff;border:1px solid #ddd;padding:18px;max-width:1100px"><h2>1. Cấu hình</h2><form method="post"><?php wp_nonce_field('xdn_save_settings');?><input type="hidden" name="xdn_save" value="1"><table class="form-table"><tr><th>OpenAI API Key</th><td><input type="password" name="api_key" value="<?php echo esc_attr($o['api_key']);?>" class="regular-text" autocomplete="off"></td></tr><tr><th>OpenAI Model</th><td><input type="text" name="model" value="<?php echo esc_attr($o['model']);?>" class="regular-text"></td></tr><tr><th>Danh mục mặc định</th><td><select name="default_category"><option value="0">-- Chọn sau khi quét --</option><?php foreach($cats as $cat):?><option value="<?php echo esc_attr($cat->term_id);?>" <?php selected($o['default_category'],$cat->term_id);?>><?php echo esc_html($cat->name);?></option><?php endforeach;?></select></td></tr></table><button class="button button-primary">Lưu cấu hình</button></form></div>
+<div style="background:#fff;border:1px solid #ddd;padding:18px;margin-top:16px;max-width:1100px"><h2>2. Quét sản phẩm nguồn</h2><p>V2.2 tách riêng tên, giá và ảnh; hỗ trợ nhiều kiểu phân trang; tối đa 300 sản phẩm mỗi lượt.</p><input id="xdn_source_url" type="url" value="https://thongnhat.com.vn/muc/san-pham" style="width:560px;max-width:100%"> <label><input id="xdn_scan_all" type="checkbox" checked> Quét tất cả trang</label> <button id="xdn_scan" class="button button-primary">Quét sản phẩm</button><div id="xdn_status" style="margin-top:12px"></div><div id="xdn_results" style="margin-top:15px"></div></div></div>
+<style>#xdn_results table{width:100%;border-collapse:collapse}#xdn_results th,#xdn_results td{padding:8px;border-bottom:1px solid #eee;text-align:left;vertical-align:middle}#xdn_results img{width:70px;height:70px;object-fit:contain;border:1px solid #eee}.xdn-pill{padding:3px 7px;border-radius:10px;background:#eef5ff;color:#135eaa;font-size:11px}.xdn-ok{color:#087f23}.xdn-error{color:#b32d2e}.xdn-log{max-height:300px;overflow:auto;background:#111;color:#ddd;padding:10px;font:12px monospace}</style>
+<script>(function(){const ajax='<?php echo esc_js(admin_url('admin-ajax.php'));?>',nonce='<?php echo esc_js(wp_create_nonce(self::NONCE));?>',R=document.getElementById('xdn_results'),S=document.getElementById('xdn_status');const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));document.getElementById('xdn_scan').onclick=async function(){const u=document.getElementById('xdn_source_url').value.trim();if(!u){S.innerHTML='Nhập URL nguồn.';return}this.disabled=true;S.innerHTML='Đang quét...';const f=new FormData();f.append('action','xdn_scan_source');f.append('nonce',nonce);f.append('source_url',u);f.append('scan_all',document.getElementById('xdn_scan_all').checked?'1':'0');try{const j=await(await fetch(ajax,{method:'POST',body:f})).json();if(!j.success)throw Error(j.data||'Lỗi');render(j.data.products||[],j.data.pages||[]);S.innerHTML='Đã tìm thấy <b>'+(j.data.products||[]).length+'</b> sản phẩm trên <b>'+(j.data.pages||[]).length+'</b> trang.'}catch(e){S.innerHTML='<span class="xdn-error">'+esc(e.message)+'</span>'}this.disabled=false};function render(ps,pages){if(!ps.length){R.innerHTML='<p class="xdn-error">Không tìm thấy sản phẩm.</p>';return}let h='<div style="margin-bottom:10px"><button class="button" id="all">Chọn tất cả</button> <button class="button" id="none">Bỏ chọn</button> <select id="cat"><option value="0">Danh mục WooCommerce...</option><?php foreach($cats as $cat)echo '<option value="'.esc_attr($cat->term_id).'">'.esc_html($cat->name).'</option>';?></select> <label><input id="ai" type="checkbox" checked> GPT viết lại SEO</label> <button class="button button-primary" id="imp">Nhập sản phẩm đã chọn</button></div><p>Trang: '+pages.map(p=>'<a target="_blank" href="'+esc(p.url)+'">'+esc(p.label)+'</a>').join(' · ')+'</p><table><thead><tr><th><input id="master" type="checkbox"></th><th>Ảnh</th><th>Sản phẩm nguồn</th><th>Giá</th><th>Loại</th><th>Trạng thái</th></tr></thead><tbody>';ps.forEach(p=>{h+='<tr><td><input class="item" type="checkbox" checked data-json=\''+esc(JSON.stringify(p))+'\'></td><td>'+(p.image?'<img src="'+esc(p.image)+'">':'')+'</td><td><b>'+esc(p.name)+'</b><br><a target="_blank" href="'+esc(p.url)+'">Mở nguồn</a></td><td>'+esc(p.price||'—')+'</td><td><span class="xdn-pill">'+(p.has_variations?'Có tùy chọn/biến thể':'Sản phẩm thường')+'</span></td><td class="st">Chờ nhập</td></tr>'});h+='</tbody></table><div id="log" class="xdn-log" style="display:none"></div>';R.innerHTML=h;document.getElementById('all').onclick=()=>document.querySelectorAll('.item').forEach(x=>x.checked=true);document.getElementById('none').onclick=()=>document.querySelectorAll('.item').forEach(x=>x.checked=false);document.getElementById('master').onchange=e=>document.querySelectorAll('.item').forEach(x=>x.checked=e.target.checked);document.getElementById('imp').onclick=importSelected}async function importSelected(){const items=[...document.querySelectorAll('.item:checked')];if(!items.length)return alert('Chưa chọn sản phẩm.');const fcat=document.getElementById('cat').value||<?php echo (int)$o['default_category'];?>,useAI=document.getElementById('ai').checked?'1':'0',log=document.getElementById('log'),btn=document.getElementById('imp');log.style.display='block';btn.disabled=true;for(const it of items){const p=JSON.parse(it.dataset.json),fd=new FormData();it.closest('tr').querySelector('.st').textContent='Đang nhập...';fd.append('action','xdn_import_products');fd.append('nonce',nonce);fd.append('products',JSON.stringify([p]));fd.append('category',fcat);fd.append('use_ai',useAI);try{const j=await(await fetch(ajax,{method:'POST',body:fd})).json();if(!j.success)throw Error(j.data||'Lỗi');const x=j.data.results[0];it.closest('tr').querySelector('.st').innerHTML=x.status==='created'?'<span class="xdn-ok">Đã tạo #'+x.id+'</span>':esc(x.message);log.innerHTML+=esc(p.name)+' → '+esc(x.message)+'<br>'}catch(e){it.closest('tr').querySelector('.st').innerHTML='<span class="xdn-error">'+esc(e.message)+'</span>';log.innerHTML+=esc(p.name)+' → '+esc(e.message)+'<br>'}}btn.disabled=false}})();</script>
+<?php }
 
-    private function plugin_basename() {
-        return plugin_basename(__FILE__);
-    }
-
-    private function github_latest_release($force = false) {
-        $cache_key = 'xdn_github_latest_release';
-        if (!$force) {
-            $cached = get_site_transient($cache_key);
-            if (is_array($cached)) return $cached;
-        }
-
-        $url = 'https://api.github.com/repos/' . self::GITHUB_REPO . '/releases/latest';
-        $r = wp_remote_get($url, [
-            'timeout' => 12,
-            'redirection' => 3,
-            'headers' => [
-                'Accept' => 'application/vnd.github+json',
-                'User-Agent' => 'XE-DAP-NINH-BINH-WordPress/' . self::VERSION,
-            ],
-        ]);
-        if (is_wp_error($r)) return [];
-        $code = wp_remote_retrieve_response_code($r);
-        if ($code !== 200) return [];
-        $data = json_decode(wp_remote_retrieve_body($r), true);
-        if (!is_array($data) || empty($data['tag_name'])) return [];
-
-        $version = ltrim((string)$data['tag_name'], "vV ");
-        $package = '';
-        if (!empty($data['assets']) && is_array($data['assets'])) {
-            foreach ($data['assets'] as $asset) {
-                $name = isset($asset['name']) ? (string)$asset['name'] : '';
-                $download = isset($asset['browser_download_url']) ? (string)$asset['browser_download_url'] : '';
-                if ($download && preg_match('/\.zip$/i', $name)) {
-                    $package = $download;
-                    break;
-                }
-            }
-        }
-        if (!$package && !empty($data['zipball_url'])) {
-            $package = $data['zipball_url'];
-        }
-
-        $result = [
-            'version' => sanitize_text_field($version),
-            'package' => esc_url_raw($package),
-            'url' => !empty($data['html_url']) ? esc_url_raw($data['html_url']) : 'https://github.com/' . self::GITHUB_REPO,
-            'name' => 'XE DAP NINH BINH',
-            'body' => !empty($data['body']) ? wp_kses_post($data['body']) : '',
-            'published_at' => !empty($data['published_at']) ? sanitize_text_field($data['published_at']) : '',
-        ];
-        set_site_transient($cache_key, $result, 6 * HOUR_IN_SECONDS);
-        return $result;
-    }
-
-    public function check_for_plugin_update($transient) {
-        if (!is_object($transient)) return $transient;
-        if (empty($transient->checked)) return $transient;
-
-        $release = $this->github_latest_release(false);
-        if (empty($release['version']) || empty($release['package'])) return $transient;
-        if (version_compare(self::VERSION, $release['version'], '>=')) return $transient;
-
-        $item = (object) [
-            'id' => 'https://github.com/' . self::GITHUB_REPO,
-            'slug' => dirname($this->plugin_basename()),
-            'plugin' => $this->plugin_basename(),
-            'new_version' => $release['version'],
-            'url' => $release['url'],
-            'package' => $release['package'],
-            'icons' => [],
-            'tested' => get_bloginfo('version'),
-            'requires_php' => '7.4',
-        ];
-        $transient->response[$this->plugin_basename()] = $item;
-        return $transient;
-    }
-
-    public function plugin_info($result, $action, $args) {
-        if ($action !== 'plugin_information' || empty($args->slug)) return $result;
-        if ($args->slug !== dirname($this->plugin_basename())) return $result;
-
-        $release = $this->github_latest_release(false);
-        if (empty($release['version'])) return $result;
-
-        return (object) [
-            'name' => 'XE DAP NINH BINH',
-            'slug' => dirname($this->plugin_basename()),
-            'version' => $release['version'],
-            'author' => '<a href="https://xedapninhbinh.com">Xe Đạp Ninh Bình</a>',
-            'homepage' => 'https://github.com/' . self::GITHUB_REPO,
-            'download_link' => $release['package'],
-            'sections' => [
-                'description' => 'WooCommerce AI Product Importer cho Xe Đạp Ninh Bình.',
-                'changelog' => nl2br($release['body']),
-            ],
-        ];
-    }
-
-    public function clear_update_cache($upgrader, $options) {
-        if (!empty($options['action']) && $options['action'] === 'update'
-            && !empty($options['type']) && $options['type'] === 'plugin') {
-            delete_site_transient('xdn_github_latest_release');
-            delete_site_transient('update_plugins');
-        }
-    }
-
-    public function manual_update_check() {
-        if (!current_user_can('manage_woocommerce')) {
-            wp_die('Không có quyền.');
-        }
-        check_admin_referer('xdn_check_update');
-        delete_site_transient('xdn_github_latest_release');
-        delete_site_transient('update_plugins');
-        wp_update_plugins();
-        wp_safe_redirect(admin_url('admin.php?page=xdn-ai-importer&xdn_update_checked=1'));
-        exit;
-    }
-
-    public function admin_menu() {
-        add_menu_page(
-            'XE DAP NINH BINH',
-            'XE DAP NINH BINH',
-            'manage_woocommerce',
-            'xdn-ai-importer',
-            [$this, 'admin_page'],
-            'dashicons-cart',
-            56
-        );
-    }
-
-    public function admin_assets($hook) {
-        if ($hook !== 'toplevel_page_xdn-ai-importer') return;
-        wp_enqueue_style('dashicons');
-    }
-
-    private function opts() {
-        $defaults = [
-            'api_key' => '',
-            'model' => 'gpt-5-mini',
-            'default_category' => 0,
-        ];
-        return wp_parse_args(get_option(self::OPT_KEY, []), $defaults);
-    }
-
-    private function save_opts() {
-        if (!current_user_can('manage_woocommerce')) return;
-        check_admin_referer('xdn_save_settings');
-        $opts = [
-            'api_key' => isset($_POST['api_key']) ? trim(sanitize_text_field(wp_unslash($_POST['api_key']))) : '',
-            'model' => isset($_POST['model']) ? sanitize_text_field(wp_unslash($_POST['model'])) : 'gpt-5-mini',
-            'default_category' => isset($_POST['default_category']) ? absint($_POST['default_category']) : 0,
-        ];
-        update_option(self::OPT_KEY, $opts);
-        echo '<div class="notice notice-success"><p>Đã lưu cấu hình.</p></div>';
-    }
-
-    public function admin_page() {
-        if (!current_user_can('manage_woocommerce')) return;
-        if (isset($_POST['xdn_save'])) $this->save_opts();
-        $o = $this->opts();
-        $cats = get_terms(['taxonomy'=>'product_cat','hide_empty'=>false]);
-        ?>
-        <div class="wrap">
-            <h1>XE DAP NINH BINH – AI Product Importer <span style="font-size:12px;color:#777">V2.1.0</span></h1>
-            <?php
-            $latest = $this->github_latest_release(false);
-            $update_url = wp_nonce_url(admin_url('admin-post.php?action=xdn_check_update'), 'xdn_check_update');
-            ?>
-            <div style="background:#fff;border:1px solid #dcdcde;padding:12px 16px;margin:12px 0;max-width:1100px">
-                <strong>Phiên bản:</strong> <?php echo esc_html(self::VERSION); ?>
-                <?php if (!empty($latest['version']) && version_compare(self::VERSION, $latest['version'], '<')): ?>
-                    <span style="color:#b32d2e;margin-left:10px">Có bản mới <?php echo esc_html($latest['version']); ?>.</span>
-                    <a class="button button-primary" href="<?php echo esc_url(admin_url('update-core.php')); ?>">Mở cập nhật WordPress</a>
-                <?php elseif (!empty($_GET['xdn_update_checked'])): ?>
-                    <span style="color:#087f23;margin-left:10px">Đã kiểm tra cập nhật.</span>
-                <?php else: ?>
-                    <span style="color:#087f23;margin-left:10px">Đang dùng bản mới nhất.</span>
-                <?php endif; ?>
-                <a class="button" style="margin-left:6px" href="<?php echo esc_url($update_url); ?>">Kiểm tra cập nhật</a>
-                <a class="button" style="margin-left:6px" target="_blank" href="https://github.com/<?php echo esc_attr(self::GITHUB_REPO); ?>">GitHub</a>
-            </div>
-
-            <div style="background:#fff;border:1px solid #dcdcde;padding:18px;margin:16px 0;max-width:1100px">
-                <h2 style="margin-top:0">1. Cấu hình</h2>
-                <form method="post">
-                    <?php wp_nonce_field('xdn_save_settings'); ?>
-                    <input type="hidden" name="xdn_save" value="1">
-                    <table class="form-table">
-                        <tr>
-                            <th><label for="xdn_api_key">OpenAI API Key</label></th>
-                            <td>
-                                <input id="xdn_api_key" type="password" name="api_key" value="<?php echo esc_attr($o['api_key']); ?>" class="regular-text" autocomplete="off">
-                                <p class="description">Key chỉ được dùng ở phía máy chủ WordPress. Không gửi key cho người khác.</p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label for="xdn_model">OpenAI Model</label></th>
-                            <td>
-                                <input id="xdn_model" type="text" name="model" value="<?php echo esc_attr($o['model']); ?>" class="regular-text">
-                                <p class="description">Mặc định: gpt-5-mini. Có thể đổi sang model bạn có quyền sử dụng.</p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label>Danh mục mặc định</label></th>
-                            <td>
-                                <select name="default_category">
-                                    <option value="0">-- Chọn sau khi quét --</option>
-                                    <?php foreach ($cats as $cat): ?>
-                                        <option value="<?php echo esc_attr($cat->term_id); ?>" <?php selected($o['default_category'], $cat->term_id); ?>>
-                                            <?php echo esc_html($cat->name); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </td>
-                        </tr>
-                    </table>
-                    <p><button class="button button-primary" type="submit">Lưu cấu hình</button></p>
-                </form>
-            </div>
-
-            <div style="background:#fff;border:1px solid #dcdcde;padding:18px;margin:16px 0;max-width:1100px">
-                <h2 style="margin-top:0">2. Quét sản phẩm nguồn</h2>
-                <p>Nhập trang danh mục, plugin sẽ tìm các sản phẩm và hiển thị danh sách trước khi bạn chọn nhập.</p>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                    <input id="xdn_source_url" type="url" class="regular-text" style="width:480px" placeholder="https://example.com/category" value="<?php echo isset($_POST['source_url']) ? esc_attr(wp_unslash($_POST['source_url'])) : ''; ?>">
-                    <label><input type="checkbox" id="xdn_all_pages" checked> Quét tất cả trang phân trang</label>
-                    <button type="button" class="button button-primary" id="xdn_scan_btn">Quét sản phẩm</button>
-                </div>
-                <div id="xdn_scan_message" style="margin-top:10px"></div>
-                <div id="xdn_scan_results"></div>
-            </div>
-        </div>
-        <?php
-        $this->inline_admin_js($o);
-    }
-
-    private function inline_admin_js($o) {
-        $ajax = admin_url('admin-ajax.php');
-        $nonce = wp_create_nonce(self::NONCE);
-        ?>
-        <script>
-        window.XDN_IMPORTER = <?php echo wp_json_encode([
-            'ajax' => $ajax,
-            'nonce' => $nonce,
-            'defaultCategory' => (int)$o['default_category'],
-        ]); ?>;
-        </script>
-        <?php
-    }
-
-    public function ajax_scan_source() {
-        if (!current_user_can('manage_woocommerce')) wp_send_json_error(['message'=>'Không có quyền.'],403);
-        check_ajax_referer(self::NONCE,'nonce');
-        $url = isset($_POST['url']) ? esc_url_raw(wp_unslash($_POST['url'])) : '';
-        if (!$url) wp_send_json_error(['message'=>'URL không hợp lệ.']);
-        $products = $this->scan_products_from_url($url);
-        wp_send_json_success(['count'=>count($products),'products'=>$products]);
-    }
-
-    private function scan_products_from_url($url) {
-        $r = wp_remote_get($url, ['timeout'=>20,'redirection'=>5,'headers'=>['User-Agent'=>'Mozilla/5.0 (compatible; XDN Product Importer)']]);
-        if (is_wp_error($r)) return [];
-        if (wp_remote_retrieve_response_code($r) >= 400) return [];
-        $html = wp_remote_retrieve_body($r);
-        if (!$html) return [];
-
-        $products=[];
-        libxml_use_internal_errors(true);
-        $dom=new DOMDocument();
-        @$dom->loadHTML('<?xml encoding="utf-8" ?>'.$html);
-        $xp=new DOMXPath($dom);
-        $nodes=$xp->query('//a[contains(@href,"/san-pham/") or contains(@href,"/product/")]');
-        $seen=[];
-        foreach($nodes as $a){
-            $href=$a->getAttribute('href');
-            if(!$href) continue;
-            $href=esc_url_raw($this->absolute_url($href,$url));
-            if(!$href || isset($seen[$href])) continue;
-            $seen[$href]=1;
-            $text=trim(preg_replace('/\s+/u',' ', $a->textContent));
-            $img=$xp->query('.//img',$a);
-            $image='';
-            if($img && $img->length){$image=$img->item(0)->getAttribute('src') ?: $img->item(0)->getAttribute('data-src');}
-            if($image) $image=esc_url_raw($this->absolute_url($image,$url));
-            if(!$text && !$image) continue;
-            $products[]=['url'=>$href,'name'=>$text ?: 'Sản phẩm','image'=>$image];
-            if(count($products)>=100) break;
-        }
-        return $products;
-    }
-
-    private function absolute_url($link,$base){
-        if(!$link) return '';
-        if(strpos($link,'//')===0){$p=wp_parse_url($base);return ($p['scheme']??'https').':'.$link;}
-        if(preg_match('#^https?://#i',$link)) return $link;
-        $p=wp_parse_url($base);
-        if(!$p || empty($p['scheme']) || empty($p['host'])) return $link;
-        if(strpos($link,'/')===0) return $p['scheme'].'://'.$p['host'].$link;
-        $path=isset($p['path']) ? dirname($p['path']).'/' : '/';
-        return $p['scheme'].'://'.$p['host'].$path.$link;
-    }
-
-    public function ajax_import_products() {
-        if (!current_user_can('manage_woocommerce')) wp_send_json_error(['message'=>'Không có quyền.'],403);
-        check_ajax_referer(self::NONCE,'nonce');
-        wp_send_json_error(['message'=>'Phiên bản GitHub V2.1 đã lưu phần khung nhập. Tính năng import hoàn chỉnh sẽ được phát triển tiếp trong V2.2.']);
-    }
+    private function get_html($url){$r=wp_remote_get($url,['timeout'=>25,'redirection'=>5,'user-agent'=>'XE-DAP-NINH-BINH-Importer/2.2','headers'=>['Accept'=>'text/html,application/xhtml+xml','Accept-Language'=>'vi,en;q=0.8']]);if(is_wp_error($r))return $r;$c=wp_remote_retrieve_response_code($r);if($c<200||$c>=400)return new WP_Error('http_error','Nguồn trả HTTP '.$c);return wp_remote_retrieve_body($r);}
+    private function abs_url($url,$base){if(!$url)return '';$url=trim(html_entity_decode($url));if(preg_match('#^https?://#i',$url))return $url;if(strpos($url,'//')===0)return 'https:'.$url;$p=wp_parse_url($base);if(!$p||empty($p['scheme'])||empty($p['host']))return $url;if($url[0]==='/')return $p['scheme'].'://'.$p['host'].$url;$path=$p['path']??'/';return $p['scheme'].'://'.$p['host'].trailingslashit(dirname($path)).$url;}
+    private function normalize_url($url){$url=strtok($url,'#');return trailingslashit($url);}
+    private function dom($html){if(!class_exists('DOMDocument'))return false;libxml_use_internal_errors(true);$d=new DOMDocument();@$d->loadHTML('<?xml encoding="utf-8" ?>'.$html);libxml_clear_errors();return $d;}
+    private function xpath_text($xp,$queries){foreach($queries as $q){$n=@$xp->query($q);if($n&&$n->length){$t=$this->clean_text($n->item(0)->textContent);if($t!=='')return $t;}}return '';}
+    private function xpath_attr($xp,$queries,$attr){foreach($queries as $q){$n=@$xp->query($q);if($n&&$n->length){$v=$n->item(0)->getAttribute($attr);if($v)return $v;}}return '';}
+    private function clean_text($t){$t=html_entity_decode(wp_strip_all_tags((string)$t),ENT_QUOTES,'UTF-8');return trim(preg_replace('/\s+/u',' ',$t));}
+    private function clean_product_name($n){$n=$this->clean_text($n);$n=preg_replace('/\s*(Chọn một tùy chọn|Thêm vào giỏ hàng|Mua ngay|Xem sản phẩm|Quick View).*$/iu','',$n);$n=preg_replace('/\s+\d{1,3}(?:[.,]\d{3})+(?:\s*[₫đ])?.*$/u','',$n);return trim($n);}
+    private function same_host($url,$host){$h=wp_parse_url($url,PHP_URL_HOST);return $h&&$host&&(strcasecmp($h,$host)===0||strcasecmp(preg_replace('/^www\./i','',$h),preg_replace('/^www\./i','',$host))===0);}
+    private function looks_like_product_url($url,$source){if(!$url||!$this->same_host($url,wp_parse_url($source,PHP_URL_HOST)))return false;$path=rtrim((string)wp_parse_url($url,PHP_URL_PATH),'/');if(!$path)return false;if(preg_match('#/(page|feed|author|cart|checkout|my-account|gio-hang|thanh-toan)(?:/|$)#i',$path))return false;if(preg_match('/\.(jpg|jpeg|png|gif|webp|pdf|xml)$/i',$path))return false;if(preg_match('#/muc/san-pham(?:/page/\d+)?/?$#i',$path))return false;return true;}
+    private function pick_image_from_node($xp,$node,$base){$c=[];foreach(['.//img[contains(@class,"wp-post-image")]','.//img[contains(@class,"attachment-woocommerce_thumbnail")]','.//img[@data-large_image]','.//img[@data-src]','.//img[@data-lazy-src]','.//img[@src]'] as $q){foreach(@$xp->query($q,$node) as $im){foreach(['data-large_image','data-src','data-lazy-src','data-original','src'] as $a){$v=trim($im->getAttribute($a));if(!$v)continue;$u=$this->abs_url($v,$base);$low=strtolower($u.' '.$im->getAttribute('class').' '.$im->getAttribute('alt'));if(preg_match('/logo|favicon|icon|avatar|placeholder|spacer|banner|header|footer/i',$low))continue;$c[$u]=max($c[$u]??0,(strpos($low,'product')!==false?5:0)+(strpos($low,'woocommerce')!==false?3:0));}}}if(!$c)return '';arsort($c);return (string)array_key_first($c);}
+    private function parse_listing($html,$source){$d=$this->dom($html);if(!$d)return [];$xp=new DOMXPath($d);$out=[];$seen=[];$host=wp_parse_url($source,PHP_URL_HOST);$nodes=@$xp->query('//li[contains(concat(" ",normalize-space(@class)," ")," product ")]');if(!$nodes||!$nodes->length)$nodes=@$xp->query('//*[contains(concat(" ",normalize-space(@class)," ")," product-small ")]');if(!$nodes||!$nodes->length)$nodes=@$xp->query('//*[contains(@class,"product") and (.//h2 or .//h3 or .//img)]');foreach($nodes as $node){$a=null;foreach(@$xp->query('.//a[@href]',$node) as $aa){$href=$this->abs_url($aa->getAttribute('href'),$source);if($href&&$this->same_host($href,$host)&&$this->looks_like_product_url($href,$source)){$a=$aa;break;}}if(!$a)continue;$url=$this->normalize_url($this->abs_url($a->getAttribute('href'),$source));if(isset($seen[$url]))continue;$name=$this->xpath_text($xp,['.//*[contains(concat(" ",normalize-space(@class)," ")," woocommerce-loop-product__title ")]','.//*[contains(concat(" ",normalize-space(@class)," ")," product-title ")]','.//h2','.//h3','.//h4']);if(!$name)$name=$a->getAttribute('title');$name=$this->clean_product_name($name);$price=$this->xpath_text($xp,['.//*[contains(concat(" ",normalize-space(@class)," ")," price ")]','.//*[contains(@class,"woocommerce-Price-amount")]']);$img=$this->pick_image_from_node($xp,$node,$source);$has=(bool)@$xp->query('.//*[contains(@class,"variation") or contains(@class,"variable") or contains(@class,"variations_form") or contains(@class,"options")]',$node)->length;if(!$name)continue;$seen[$url]=1;$out[]=['url'=>$url,'name'=>$name,'image'=>$img,'price'=>$this->clean_text($price),'has_variations'=>$has];}return $out;}
+    private function find_pagination($html,$source){$d=$this->dom($html);if(!$d)return [];$xp=new DOMXPath($d);$pages=[];$seen=[];$base=$this->normalize_url($source);$pages[]=['url'=>$base,'label'=>'1'];$seen[$base]=1;foreach(@$xp->query('//a[@href]') as $a){$href=$this->abs_url($a->getAttribute('href'),$source);if(!$href||!$this->same_host($href,wp_parse_url($source,PHP_URL_HOST)))continue;$path=(string)wp_parse_url($href,PHP_URL_PATH);$query=(string)wp_parse_url($href,PHP_URL_QUERY);$label=$this->clean_text($a->textContent);$num=0;if(preg_match('#/page/(\d+)/?$#i',$path,$m))$num=(int)$m[1];elseif(preg_match('/(?:^|&)(?:paged|page)=(\d+)/i',$query,$m))$num=(int)$m[1];elseif(preg_match('/^\d+$/',$label))$num=(int)$label;if($num>1){$u=$this->normalize_url($href);if(!isset($seen[$u])){$seen[$u]=1;$pages[]=['url'=>$u,'label'=>(string)$num];}}}usort($pages,function($a,$b){return (int)$a['label']-(int)$b['label'];});return array_slice($pages,0,50);}
+    public function ajax_scan_source(){if(!current_user_can('manage_woocommerce'))wp_send_json_error('Không có quyền.');check_ajax_referer(self::NONCE,'nonce');$source=esc_url_raw(wp_unslash($_POST['source_url']??''));if(!$source)wp_send_json_error('URL không hợp lệ.');$html=$this->get_html($source);if(is_wp_error($html))wp_send_json_error($html->get_error_message());$pages=$this->find_pagination($html,$source);if(empty($_POST['scan_all']))$pages=array_slice($pages,0,1);$products=[];$seen=[];$page_errors=[];foreach($pages as $page){$ph=$page['url']===$this->normalize_url($source)?$html:$this->get_html($page['url']);if(is_wp_error($ph)){$page_errors[]=['page'=>$page['label'],'message'=>$ph->get_error_message()];continue;}foreach($this->parse_listing($ph,$page['url']) as $p){if(isset($seen[$p['url']]))continue;$seen[$p['url']]=1;$products[]=$p;if(count($products)>=300)break 2;}}wp_send_json_success(['products'=>$products,'pages'=>$pages,'page_errors'=>$page_errors]);}
+    private function parse_product($url){$html=$this->get_html($url);if(is_wp_error($html))return $html;$d=$this->dom($html);if(!$d)return new WP_Error('dom','PHP DOMDocument chưa bật.');$xp=new DOMXPath($d);$title=$this->xpath_attr($xp,['//meta[@property="og:title"]','//meta[@name="twitter:title"]'],'content');if(!$title)$title=$this->xpath_text($xp,['//h1[contains(@class,"product_title")]','//h1','//title']);$title=$this->clean_product_name($title);$short=$this->xpath_text($xp,['//div[contains(@class,"woocommerce-product-details__short-description")]','//div[contains(@class,"short-description")]','//div[contains(@class,"product-short-description")]']);$content=$this->xpath_text($xp,['//div[contains(@class,"woocommerce-Tabs-panel--description")]','//div[contains(@class,"product-description")]','//div[contains(@class,"entry-content")]']);$sku=$this->xpath_text($xp,['//*[contains(concat(" ",normalize-space(@class)," ")," sku ")]']);$price_text=$this->xpath_text($xp,['//p[contains(concat(" ",normalize-space(@class)," ")," price ")]','//*[contains(concat(" ",normalize-space(@class)," ")," price ")]']);$regular=$this->xpath_text($xp,['//*[contains(concat(" ",normalize-space(@class)," ")," regular-price ")]','//del//span[contains(@class,"amount")]','//del']);$sale=$this->xpath_text($xp,['//*[contains(concat(" ",normalize-space(@class)," ")," sale-price ")]','//ins//span[contains(@class,"amount")]','//ins']);$json=$this->extract_offer_prices($xp);$regular_price=$this->parse_price($regular?:$price_text);$sale_price=$this->parse_price($sale);if(!$regular_price)$regular_price=$json['regular'];if(!$sale_price)$sale_price=$json['sale'];if(!$regular_price&&$sale_price)$regular_price=$sale_price;$images=[];foreach(@$xp->query('//meta[@property="og:image"] | //meta[@name="twitter:image"]') as $m){$v=$m->getAttribute('content');if($v)$images[]=$this->abs_url($v,$url);}foreach(['//div[contains(@class,"woocommerce-product-gallery")]//img','//div[contains(@class,"product-gallery")]//img','//figure[contains(@class,"woocommerce-product-gallery__image")]//img'] as $q){foreach(@$xp->query($q) as $im){foreach(['data-large_image','data-src','data-lazy-src','src'] as $attr){$v=trim($im->getAttribute($attr));if(!$v)continue;$u=$this->abs_url($v,$url);$low=strtolower($u.' '.$im->getAttribute('class').' '.$im->getAttribute('alt'));if(!preg_match('/logo|favicon|icon|avatar|placeholder|banner|header|footer/i',$low))$images[]=$u;break;}}}$images=array_values(array_unique(array_filter($images)));$attributes=[];foreach(@$xp->query('//table[contains(@class,"variations") or contains(@class,"shop_attributes")]//tr | //select[contains(@name,"attribute")]') as $node){$txt=$this->clean_text($node->textContent);if($txt&&strlen($txt)<500)$attributes[]=$txt;}$spec='';foreach(@$xp->query('//table') as $table){$txt=$this->clean_text($table->textContent);if(strlen($txt)>20&&strlen($txt)<12000){$spec=$txt;break;}}return['url'=>$url,'title'=>$title,'short_description'=>$short,'content'=>$content,'price_text'=>$price_text,'regular_price'=>$regular_price,'sale_price'=>$sale_price,'sku'=>$this->clean_text($sku),'images'=>$images,'attributes'=>array_values(array_unique($attributes)),'specs'=>$spec];}
+    private function extract_offer_prices($xp){$out=['regular'=>0,'sale'=>0];foreach(@$xp->query('//script[@type="application/ld+json"]') as $s){$j=json_decode(trim($s->textContent),true);if(!is_array($j))continue;$stack=[$j];while($stack){$x=array_pop($stack);if(!is_array($x))continue;if(isset($x['offers']))$stack[]=$x['offers'];if(isset($x['price'])){$v=(float)preg_replace('/[^0-9.]/','',(string)$x['price']);if($v>0)$out['sale']=$out['sale']?:$v;}if(isset($x['lowPrice'])){$v=(float)preg_replace('/[^0-9.]/','',(string)$x['lowPrice']);if($v>0)$out['regular']=$out['regular']?:$v;}foreach($x as $v)if(is_array($v))$stack[]=$v;}}return$out;}
+    private function image_id($url,$post_id=0){if(!$url)return 0;require_once ABSPATH.'wp-admin/includes/media.php';require_once ABSPATH.'wp-admin/includes/file.php';require_once ABSPATH.'wp-admin/includes/image.php';$tmp=download_url($url,30);if(is_wp_error($tmp))return 0;$type=wp_check_filetype(wp_basename(parse_url($url,PHP_URL_PATH)));if(!empty($type['type'])&&strpos($type['type'],'image/')!==0){@unlink($tmp);return 0;}$name=wp_basename(parse_url($url,PHP_URL_PATH));if(!$name||strpos($name,'.')===false)$name='image-'.md5($url).'.jpg';$id=media_handle_sideload(['name'=>sanitize_file_name($name),'tmp_name'=>$tmp],$post_id);if(is_wp_error($id)){@unlink($tmp);return 0;}return(int)$id;}
+    private function parse_price($txt){$txt=html_entity_decode(wp_strip_all_tags((string)$txt),ENT_QUOTES,'UTF-8');if(preg_match_all('/(\d{1,3}(?:[.,]\d{3})+|\d{4,})(?:\s*(?:₫|đ|vnd|vnđ))?/iu',$txt,$m)){foreach($m[1] as $v){$v=preg_replace('/[^0-9]/','',$v);if($v!=='')return(float)$v;}}return 0;}
+    private function ai_rewrite($data){$o=$this->opts();if(empty($o['api_key']))return new WP_Error('no_key','Chưa có OpenAI API Key.');$prompt="Bạn là chuyên gia SEO cho cửa hàng Xe Đạp Ninh Bình tại Việt Nam. Viết lại nội dung sản phẩm thành nội dung riêng, tự nhiên, không sao chép nguyên văn. Không bịa thông số, giá, màu sắc hoặc tính năng. Trả JSON gồm name, short_description, description, seo_title, meta_description, tags. description dùng h2/h3,p,ul,li. Tập trung từ khóa xe đạp Thống Nhất, xe đạp Ninh Bình, mua xe đạp Thống Nhất chính hãng. Dữ liệu:\n".wp_json_encode($data,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);$r=wp_remote_post('https://api.openai.com/v1/responses',['timeout'=>90,'headers'=>['Authorization'=>'Bearer '.$o['api_key'],'Content-Type'=>'application/json'],'body'=>wp_json_encode(['model'=>$o['model']?:'gpt-5-mini','input'=>$prompt,'text'=>['format'=>['type'=>'json_object']]])]);if(is_wp_error($r))return$r;$code=wp_remote_retrieve_response_code($r);$j=json_decode(wp_remote_retrieve_body($r),true);if($code<200||$code>=300)return new WP_Error('openai',$j['error']['message']??('OpenAI HTTP '.$code));$text=$j['output_text']??'';if(!$text&&!empty($j['output']))foreach($j['output'] as $out)foreach(($out['content']??[]) as $c)if(isset($c['text']))$text.=$c['text'];$x=json_decode(trim($text),true);return is_array($x)?$x:new WP_Error('ai_json','AI không trả JSON hợp lệ.');}
+    private function product_exists_by_source($url){$q=new WP_Query(['post_type'=>'product','post_status'=>'any','meta_key'=>'_xdn_source_url','meta_value'=>$url,'posts_per_page'=>1,'fields'=>'ids']);return!empty($q->posts)?(int)$q->posts[0]:0;}
+    public function ajax_import_products(){if(!current_user_can('manage_woocommerce'))wp_send_json_error('Không có quyền.');check_ajax_referer(self::NONCE,'nonce');if(!class_exists('WooCommerce'))wp_send_json_error('WooCommerce chưa được kích hoạt.');$products=json_decode(wp_unslash($_POST['products']??'[]'),true);$cat=absint($_POST['category']??0);$use_ai=!empty($_POST['use_ai']);$results=[];foreach((array)$products as $p){$url=esc_url_raw($p['url']??'');if(!$url){$results[]=['status'=>'error','message'=>'URL trống'];continue;}if($existing=$this->product_exists_by_source($url)){$results[]=['status'=>'exists','id'=>$existing,'message'=>'Đã tồn tại #'.$existing];continue;}$data=$this->parse_product($url);if(is_wp_error($data)){$results[]=['status'=>'error','message'=>$data->get_error_message()];continue;}$ai=[];if($use_ai){$ai=$this->ai_rewrite($data);if(is_wp_error($ai)){$results[]=['status'=>'error','message'=>'OpenAI: '.$ai->get_error_message()];continue;}}$name=sanitize_text_field($ai['name']??$data['title']??$p['name']);$desc=wp_kses_post($ai['description']??$data['content']??'');$short=wp_kses_post($ai['short_description']??$data['short_description']??'');$regular=(float)($data['regular_price']??0);$sale=(float)($data['sale_price']??0);if($sale>0&&$regular>0&&$sale>=$regular)$sale=0;if(!$regular&&$sale)$regular=$sale;try{$product=new WC_Product_Simple();$product->set_name($name?:'Sản phẩm nhập từ nguồn');$product->set_status('draft');$product->set_description($desc);$product->set_short_description($short);if($regular>0)$product->set_regular_price((string)$regular);if($sale>0)$product->set_sale_price((string)$sale);if(!empty($data['sku']))$product->set_sku(sanitize_text_field($data['sku']));$post_id=$product->save();}catch(Exception $e){$results[]=['status'=>'error','message'=>$e->getMessage()];continue;}update_post_meta($post_id,'_xdn_source_url',$url);update_post_meta($post_id,'_xdn_source_sku',sanitize_text_field($data['sku']??''));update_post_meta($post_id,'_xdn_source_data',wp_json_encode($data,JSON_UNESCAPED_UNICODE));update_post_meta($post_id,'_xdn_import_version',self::VERSION);if($cat)wp_set_object_terms($post_id,[$cat],'product_cat');if(!empty($ai['tags'])&&is_array($ai['tags']))wp_set_object_terms($post_id,array_map('sanitize_text_field',$ai['tags']),'product_tag');if(!empty($ai['seo_title']))update_post_meta($post_id,'_xdn_seo_title',sanitize_text_field($ai['seo_title']));if(!empty($ai['meta_description']))update_post_meta($post_id,'_xdn_meta_description',sanitize_text_field($ai['meta_description']));$gallery=[];foreach(array_slice($data['images']??[],0,12) as $img){$id=$this->image_id($img,$post_id);if($id)$gallery[]=$id;}if($gallery){set_post_thumbnail($post_id,$gallery[0]);if(count($gallery)>1)update_post_meta($post_id,'_product_image_gallery',implode(',',array_unique($gallery)));}$results[]=['status'=>'created','id'=>$post_id,'message'=>'Đã tạo sản phẩm nháp #'.$post_id,'name'=>$name,'regular_price'=>$regular,'sale_price'=>$sale,'images'=>count($gallery)];}wp_send_json_success(['results'=>$results]);}
 }
-
 new XDN_AI_Product_Importer_V2();
