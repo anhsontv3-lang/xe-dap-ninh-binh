@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'tools/v253_patch.py'
+      - 'tools/v253_fix.py'
       - 'tools/v253_trigger.txt'
       - 'xe-dap-ninh-binh/xe-dap-ninh-binh.php'
     branches: [main]
@@ -21,6 +22,9 @@ jobs:
 
       - name: Apply patch
         run: python3 tools/v253_patch.py
+
+      - name: Apply fixes
+        run: python3 tools/v253_fix.py
 
       - name: Commit V2.5.3
         run: |
