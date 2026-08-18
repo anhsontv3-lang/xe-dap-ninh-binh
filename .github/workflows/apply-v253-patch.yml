@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'tools/v253_patch.py'
+      - 'tools/v253_trigger.txt'
       - 'xe-dap-ninh-binh/xe-dap-ninh-binh.php'
     branches: [main]
 
