@@ -1,0 +1,64 @@
+name: Apply V2.5.2 importer progress UI
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-v2.5.2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch plugin
+        env:
+          MAIN: xe-dap-ninh-binh/xe-dap-ninh-binh.php
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('xe-dap-ninh-binh/xe-dap-ninh-binh.php')
+          s = path.read_text(encoding='utf-8')
+
+          s = s.replace(' * Version: 2.2.1', ' * Version: 2.5.2', 1)
+          s = s.replace("const VERSION = '2.2.1';", "const VERSION = '2.5.2';", 1)
+          s = s.replace('V2.2.1', 'V2.5.2')
+
+          marker = '<div style="background:#fff;border:1px solid #ddd;padding:18px;max-width:1100px"><h2>1. Cấu hình</h2>'
+          banner = '''<div id="xdn_import_counter" class="xdn-import-counter" role="status" aria-live="polite">Đã nhập thành công <strong>0</strong> sản phẩm</div>\n'''
+          if 'id="xdn_import_counter"' not in s:
+              if marker not in s:
+                  raise SystemExit('Không tìm thấy vị trí chèn bộ đếm')
+              s = s.replace(marker, banner + marker, 1)
+
+          old_css = '.xdn-ok{color:#087f23}.xdn-error{color:#b32d2e}.xdn-log{max-height:300px;overflow:auto;background:#111;color:#ddd;padding:10px;font:12px monospace}'
+          new_css = old_css + '.xdn-import-counter{background:#edfff1;border:1px solid #46b96b;color:#087f23;font-size:18px;font-weight:600;padding:14px 18px;margin:12px 0;max-width:1100px;box-sizing:border-box}.xdn-import-counter strong{font-size:22px}'
+          if old_css in s and 'xdn-import-counter{' not in s:
+              s = s.replace(old_css, new_css, 1)
+
+          pattern = r'async function importSelected\(\)\{.*?\}\}\)\(\);</script>'
+          replacement = '''async function importSelected(){const items=[...document.querySelectorAll('.item:checked')];if(!items.length)return alert('Chưa chọn sản phẩm.');const fcat=document.getElementById('cat').value||<?php echo (int)$o['default_category'];?>,useAI=document.getElementById('ai').checked?'1':'0',log=document.getElementById('log'),btn=document.getElementById('imp'),counter=document.getElementById('xdn_import_counter');let success=0,skipped=0,failed=0;const total=items.length;const updateCounter=()=>{counter.innerHTML='Đã nhập thành công <strong>'+success+'</strong> / '+total+' sản phẩm'+(skipped?' · Bỏ qua: '+skipped:'')+(failed?' · Lỗi: '+failed:'');};updateCounter();log.style.display='block';btn.disabled=true;for(const it of items){const p=JSON.parse(it.dataset.json),fd=new FormData();it.closest('tr').querySelector('.st').textContent='Đang nhập...';fd.append('action','xdn_import_products');fd.append('nonce',nonce);fd.append('products',JSON.stringify([p]));fd.append('category',fcat);fd.append('use_ai',useAI);try{const j=await(await fetch(ajax,{method:'POST',body:fd})).json();if(!j.success)throw Error(j.data||'Lỗi');const x=j.data.results[0];if(x.status==='created'){success++;it.closest('tr').querySelector('.st').innerHTML='<span class="xdn-ok">Đã tạo #'+x.id+'</span>'}else{skipped++;it.closest('tr').querySelector('.st').innerHTML=esc(x.message)}log.innerHTML+=esc(p.name)+' → '+esc(x.message)+'<br>'}catch(e){failed++;it.closest('tr').querySelector('.st').innerHTML='<span class="xdn-error">'+esc(e.message)+'</span>';log.innerHTML+=esc(p.name)+' → '+esc(e.message)+'<br>'}updateCounter();}btn.disabled=false;updateCounter()}})();</script>'''
+          s2, n = re.subn(pattern, replacement, s, count=1, flags=re.S)
+          if n != 1:
+              raise SystemExit('Không tìm thấy hàm importSelected để cập nhật')
+          s = s2
+
+          path.write_text(s, encoding='utf-8')
+          PY
+
+          php -l "$MAIN"
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add xe-dap-ninh-binh/xe-dap-ninh-binh.php
+          git diff --cached --quiet && exit 0
+          git commit -m "V2.5.2 add green import progress counter"
+          git push
