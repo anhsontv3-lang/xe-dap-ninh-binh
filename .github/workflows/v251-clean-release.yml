@@ -1,0 +1,68 @@
+name: Build clean V2.5.1 release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare clean V2.5.1 package
+        run: |
+          set -e
+          rm -rf build
+          mkdir -p build/xe-dap-ninh-binh
+          cp xe-dap-ninh-binh/xe-dap-ninh-binh.php build/xe-dap-ninh-binh/xe-dap-ninh-binh.php
+          MAIN=build/xe-dap-ninh-binh/xe-dap-ninh-binh.php
+
+          python3 - "$MAIN" <<'PY'
+          import re, sys
+          from pathlib import Path
+          p=Path(sys.argv[1])
+          s=p.read_text(encoding='utf-8')
+          s=re.sub(r'^ \* Version: .*$', ' * Version: 2.5.1', s, count=1, flags=re.M)
+          s=re.sub(r"const VERSION = '[^']+';", "const VERSION = '2.5.1';", s, count=1)
+          s=re.sub(r'V[0-9]+\\.[0-9]+\\.[0-9]+', 'V2.5.1', s)
+          s=s.replace('xdn_migration_261','xdn_migration_251')
+          p.write_text(s, encoding='utf-8')
+          PY
+
+          test "$(find build/xe-dap-ninh-binh -maxdepth 1 -type f -name '*.php' | wc -l)" -eq 1
+          grep -q 'Plugin Name: XE DAP NINH BINH' "$MAIN"
+          grep -q 'Version: 2.5.1' "$MAIN"
+          grep -q "const VERSION = '2.5.1';" "$MAIN"
+          grep -q 'function run_migrations()' "$MAIN"
+          grep -q 'xdn_migration_251' "$MAIN"
+          grep -q 'deactivate_plugins' "$MAIN"
+          grep -q '@unlink' "$MAIN"
+
+          cd build
+          zip -r ../xe-dap-ninh-binh-v2.5.1.zip xe-dap-ninh-binh >/dev/null
+          cd ..
+          test -f xe-dap-ninh-binh-v2.5.1.zip
+          unzip -l xe-dap-ninh-binh-v2.5.1.zip
+          if unzip -l xe-dap-ninh-binh-v2.5.1.zip | grep -Eq 'variation-guard|ai-v2\\.5|ai-bridge|ai-product-importer'; then
+            echo 'Legacy plugin module found in V2.5.1 package'
+            exit 1
+          fi
+
+      - name: Publish V2.5.1 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          gh release delete v2.5.1 --yes 2>/dev/null || true
+          git tag -f v2.5.1 HEAD
+          git push -f origin v2.5.1
+          gh release create v2.5.1 xe-dap-ninh-binh-v2.5.1.zip \
+            --title 'XE DAP NINH BINH v2.5.1 – Clean Migration' \
+            --notes 'Clean migration release: one plugin only. The package contains only xe-dap-ninh-binh/xe-dap-ninh-binh.php. On admin load it deactivates and removes legacy module files without deleting the main plugin directory. This release is intended to update an existing V2.5.0 installation safely.' \
+            --latest
