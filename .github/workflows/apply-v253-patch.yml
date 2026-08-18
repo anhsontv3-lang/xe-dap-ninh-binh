@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'tools/v260_patch.py'
+      - 'tools/v260_trigger.txt'
       - 'tools/v253_patch.py'
       - 'tools/v253_fix.py'
       - 'tools/v253_trigger.txt'
