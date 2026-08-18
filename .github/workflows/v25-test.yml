@@ -1,0 +1,56 @@
+name: V2.5 test package
+
+on:
+  push:
+    branches: [v2.5-test]
+    paths:
+      - 'tools/v25_patch.py'
+      - '.github/workflows/v25-test.yml'
+      - 'xe-dap-ninh-binh/xe-dap-ninh-binh.php'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply V2.5 patch
+        run: python3 tools/v25_patch.py
+
+      - name: PHP syntax check
+        run: php -l xe-dap-ninh-binh/xe-dap-ninh-binh.php
+
+      - name: Commit patched plugin
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add xe-dap-ninh-binh/xe-dap-ninh-binh.php
+          if git diff --cached --quiet; then
+            echo "No source changes"
+          else
+            git commit -m "Build V2.5.0 SEO specs test [skip ci]"
+            git push
+          fi
+
+      - name: Build WordPress ZIP
+        run: |
+          rm -rf build xe-dap-ninh-binh-v2.5.0-test.zip
+          mkdir -p build/xe-dap-ninh-binh
+          cp -R xe-dap-ninh-binh/. build/xe-dap-ninh-binh/
+          cd build
+          zip -r ../xe-dap-ninh-binh-v2.5.0-test.zip xe-dap-ninh-binh >/dev/null
+          cd ..
+          unzip -l xe-dap-ninh-binh-v2.5.0-test.zip | grep -q 'xe-dap-ninh-binh/xe-dap-ninh-binh.php'
+          unzip -p xe-dap-ninh-binh-v2.5.0-test.zip xe-dap-ninh-binh/xe-dap-ninh-binh.php | grep -E '^ \* Version: 2.5.0|const VERSION = '\''2.5.0'\'''
+
+      - name: Upload test ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: xe-dap-ninh-binh-v2.5.0-test
+          path: xe-dap-ninh-binh-v2.5.0-test.zip
+          retention-days: 7
