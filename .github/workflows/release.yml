@@ -1,0 +1,51 @@
+name: Build and publish plugin release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Plugin version, for example 2.3.0'
+        required: true
+        default: '2.3.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate version
+        run: |
+          VERSION="${{ inputs.version }}"
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Invalid version: $VERSION"
+            exit 1
+          fi
+
+      - name: Prepare plugin package
+        run: |
+          VERSION="${{ inputs.version }}"
+          rm -rf build
+          mkdir -p "build/xe-dap-ninh-binh"
+          cp -R xe-dap-ninh-binh/. "build/xe-dap-ninh-binh/"
+          sed -i -E "s/^ \* Version: .*/ * Version: ${VERSION}/" "build/xe-dap-ninh-binh/xe-dap-ninh-binh.php"
+          sed -i -E "s/const VERSION = '[^']+';/const VERSION = '${VERSION}';/" "build/xe-dap-ninh-binh/xe-dap-ninh-binh.php"
+          zip -r "xe-dap-ninh-binh-v${VERSION}.zip" build/xe-dap-ninh-binh >/dev/null
+          mv "xe-dap-ninh-binh-v${VERSION}.zip" build/
+          grep -E '^ \* Version:|const VERSION' "build/xe-dap-ninh-binh/xe-dap-ninh-binh.php"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ inputs.version }}"
+          gh release delete "v${VERSION}" --yes 2>/dev/null || true
+          git tag -f "v${VERSION}" "$GITHUB_SHA"
+          git push -f origin "v${VERSION}"
+          gh release create "v${VERSION}" "build/xe-dap-ninh-binh-v${VERSION}.zip" \
+            --title "XE DAP NINH BINH v${VERSION}" \
+            --generate-notes
