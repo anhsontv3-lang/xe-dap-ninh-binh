@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Plugin version, for example 2.6.0'
+        description: 'Plugin version, for example 2.6.1'
         required: true
-        default: '2.6.0'
+        default: '2.6.1'
 
 permissions:
   contents: write
@@ -26,18 +26,89 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare plugin package
+      - name: Prepare clean single-plugin package
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${{ inputs.version }}"
           rm -rf build
           mkdir -p "build/xe-dap-ninh-binh"
-          cp -R xe-dap-ninh-binh/. "build/xe-dap-ninh-binh/"
+
+          # Only the real main plugin file is shipped.
+          # Legacy PHP modules previously caused WordPress to list several
+          # XE DAP NINH BINH plugins from the same directory.
+          cp xe-dap-ninh-binh/xe-dap-ninh-binh.php "build/xe-dap-ninh-binh/xe-dap-ninh-binh.php"
 
           MAIN="build/xe-dap-ninh-binh/xe-dap-ninh-binh.php"
 
-          sed -i -E "s/^ \* Version: .*/ * Version: ${VERSION}/" "$MAIN"
-          sed -i -E "s/const VERSION = '[^']+';/const VERSION = '${VERSION}';/" "$MAIN"
-          sed -i -E "s/V[0-9]+\.[0-9]+\.[0-9]+/V${VERSION}/g" "$MAIN"
+          python3 - "$MAIN" "$VERSION" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          main = Path(sys.argv[1])
+          version = sys.argv[2]
+          src = main.read_text(encoding="utf-8")
+
+          # Keep the plugin identity stable while changing only its version.
+          src = re.sub(r'^ \* Version: .*$', f' * Version: {version}', src, count=1, flags=re.M)
+          src = re.sub(r"const VERSION = '[^']+';", f"const VERSION = '{version}';", src, count=1)
+          src = re.sub(r'V[0-9]+\.[0-9]+\.[0-9]+', f'V{version}', src)
+
+          # Upgrade migration: remove old XE DAP NINH BINH plugin files and
+          # stale active-plugin entries. This runs from the new main plugin on
+          # admin_init because activation hooks do not run for silent updates.
+          legacy_block = r'''    public function run_migrations() {
+        $done = get_option('xdn_migration_261', '');
+        if ($done === '1') return;
+
+        $legacy = [
+            'xe-dap-ninh-binh/xe-dap-ninh-binh-v2.3-variation-guard.php',
+            'xe-dap-ninh-binh/xe-dap-ninh-binh-ai-v2.5.php',
+            'xe-dap-ninh-binh/v2.5.1-ai-bridge.php',
+            'xe-dap-ninh-binh/xe-dap-ninh-binh-variation-guard.php',
+            'xe-dap-ninh-binh/xe-dap-ninh-binh-ai-product-importer.php',
+        ];
+
+        if (is_admin()) {
+            if (!function_exists('deactivate_plugins')) {
+                require_once ABSPATH . 'wp-admin/includes/plugin.php';
+            }
+            deactivate_plugins($legacy, true, null);
+        }
+
+        foreach ($legacy as $plugin_file) {
+            $path = WP_PLUGIN_DIR . '/' . $plugin_file;
+            if (is_file($path)) {
+                @unlink($path);
+            }
+        }
+
+        update_option('xdn_migration_261', '1', false);
+    }
+
+'''
+          needle = '    private function plugin_basename(){return plugin_basename(__FILE__);}'
+          if 'function run_migrations()' not in src:
+              src = src.replace(needle, legacy_block + needle, 1)
+
+          needle = "        add_action('admin_post_xdn_check_update', [$this, 'manual_update_check']);"
+          replacement = needle + "\n        add_action('admin_init', [$this, 'run_migrations'], 1);"
+          if "add_action('admin_init', [$this, 'run_migrations'], 1);" not in src:
+              src = src.replace(needle, replacement, 1)
+
+          main.write_text(src, encoding='utf-8')
+          PY
+
+          # Strict package checks: exactly one plugin PHP file, correct root,
+          # and stable plugin basename for WordPress update matching.
+          test -f "$MAIN"
+          test "$(find build/xe-dap-ninh-binh -maxdepth 1 -type f -name '*.php' | wc -l)" -eq 1
+          grep -q "Plugin Name: XE DAP NINH BINH" "$MAIN"
+          grep -q "Version: ${VERSION}" "$MAIN"
+          grep -q "const VERSION = '${VERSION}';" "$MAIN"
+          grep -q "Update URI: https://github.com/anhsontv3-lang/xe-dap-ninh-binh" "$MAIN"
+          grep -q "function run_migrations()" "$MAIN"
+          grep -q "xdn_migration_261" "$MAIN"
 
           cd build
           zip -r "../xe-dap-ninh-binh-v${VERSION}.zip" xe-dap-ninh-binh >/dev/null
@@ -45,7 +116,10 @@ jobs:
 
           test -f "xe-dap-ninh-binh-v${VERSION}.zip"
           unzip -l "xe-dap-ninh-binh-v${VERSION}.zip" | grep -q "xe-dap-ninh-binh/xe-dap-ninh-binh.php"
-          unzip -p "xe-dap-ninh-binh-v${VERSION}.zip" "xe-dap-ninh-binh/xe-dap-ninh-binh.php" | grep -E "^ \* Version: ${VERSION}|const VERSION = '${VERSION}'"
+          if unzip -l "xe-dap-ninh-binh-v${VERSION}.zip" | grep -Eq 'xe-dap-ninh-binh/(v2\.5\.1-ai-bridge|xe-dap-ninh-binh-ai-v2\.5|xe-dap-ninh-binh-v2\.3-variation-guard|xe-dap-ninh-binh-variation-guard|xe-dap-ninh-binh-ai-product-importer)\.php'; then
+            echo 'Legacy plugin PHP file found in release package.'
+            exit 1
+          fi
 
       - name: Create GitHub release
         env:
@@ -57,5 +131,5 @@ jobs:
           git push -f origin "v${VERSION}"
           gh release create "v${VERSION}" "xe-dap-ninh-binh-v${VERSION}.zip" \
             --title "XE DAP NINH BINH v${VERSION}" \
-            --notes "## XE DAP NINH BINH v${VERSION}\n\n- Tự động thêm liên kết nội bộ SEO.\n- Tự động tạo phần Thông số kỹ thuật sản phẩm.\n- Lấy thông số từ dữ liệu sản phẩm nguồn, không để AI tự đoán.\n- Hỗ trợ sản phẩm có biến thể, màu sắc và kích thước.\n- Giữ cơ chế chống nhập trùng theo URL nguồn.\n- AI chỉ viết lại nội dung SEO; không tự thay đổi giá, SKU hoặc dữ liệu biến thể.\n- Đóng gói ZIP đúng cấu trúc WordPress." \
+            --notes "## XE DAP NINH BINH v${VERSION}\n\n- Sửa cơ chế đóng gói: chỉ còn một plugin chính XE DAP NINH BINH.\n- Update đè đúng thư mục plugin theo chuẩn WordPress.\n- Loại bỏ các module PHP cũ khỏi package.\n- Tự dọn các module cũ còn sót lại và active-plugin entries sau khi cập nhật.\n- Giữ nguyên cấu hình OpenAI, dữ liệu sản phẩm, SEO internal links và thông số kỹ thuật.\n- ZIP có cấu trúc xe-dap-ninh-binh/xe-dap-ninh-binh.php." \
             --latest
