@@ -1,0 +1,34 @@
+name: Apply V2.5.3 patch
+
+on:
+  push:
+    paths:
+      - 'tools/v253_patch.py'
+      - 'xe-dap-ninh-binh/xe-dap-ninh-binh.php'
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply patch
+        run: python3 tools/v253_patch.py
+
+      - name: Commit V2.5.3
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add xe-dap-ninh-binh/xe-dap-ninh-binh.php
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Release V2.5.3 source update [skip ci]"
+          git push
