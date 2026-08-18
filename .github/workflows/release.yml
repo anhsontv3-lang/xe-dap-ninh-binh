@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Plugin version, for example 2.3.0'
+        description: 'Plugin version, for example 2.3.1'
         required: true
-        default: '2.3.0'
+        default: '2.3.1'
 
 permissions:
   contents: write
@@ -32,10 +32,19 @@ jobs:
           rm -rf build
           mkdir -p "build/xe-dap-ninh-binh"
           cp -R xe-dap-ninh-binh/. "build/xe-dap-ninh-binh/"
+
+          # Package version is controlled by the release input.
           sed -i -E "s/^ \* Version: .*/ * Version: ${VERSION}/" "build/xe-dap-ninh-binh/xe-dap-ninh-binh.php"
           sed -i -E "s/const VERSION = '[^']+';/const VERSION = '${VERSION}';/" "build/xe-dap-ninh-binh/xe-dap-ninh-binh.php"
-          zip -r "xe-dap-ninh-binh-v${VERSION}.zip" build/xe-dap-ninh-binh >/dev/null
-          mv "xe-dap-ninh-binh-v${VERSION}.zip" build/
+
+          # IMPORTANT: zip from inside build so the ZIP root is exactly
+          # xe-dap-ninh-binh/, which is the folder WordPress expects.
+          cd build
+          zip -r "../xe-dap-ninh-binh-v${VERSION}.zip" xe-dap-ninh-binh >/dev/null
+          cd ..
+
+          test -f "xe-dap-ninh-binh-v${VERSION}.zip"
+          unzip -l "xe-dap-ninh-binh-v${VERSION}.zip" | head -30
           grep -E '^ \* Version:|const VERSION' "build/xe-dap-ninh-binh/xe-dap-ninh-binh.php"
 
       - name: Create GitHub release
@@ -46,6 +55,6 @@ jobs:
           gh release delete "v${VERSION}" --yes 2>/dev/null || true
           git tag -f "v${VERSION}" "$GITHUB_SHA"
           git push -f origin "v${VERSION}"
-          gh release create "v${VERSION}" "build/xe-dap-ninh-binh-v${VERSION}.zip" \
+          gh release create "v${VERSION}" "xe-dap-ninh-binh-v${VERSION}.zip" \
             --title "XE DAP NINH BINH v${VERSION}" \
             --generate-notes
