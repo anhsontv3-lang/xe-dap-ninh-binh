@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Plugin version, for example 2.5.1'
+        description: 'Plugin version, for example 2.5.2'
         required: true
-        default: '2.5.1'
+        default: '2.5.2'
 
 permissions:
   contents: write
@@ -37,7 +37,7 @@ jobs:
 
           sed -i -E "s/^ \* Version: .*/ * Version: ${VERSION}/" "$MAIN"
           sed -i -E "s/const VERSION = '[^']+';/const VERSION = '${VERSION}';/" "$MAIN"
-          sed -i -E "s/V2\.2\.1/V${VERSION}/g" "$MAIN"
+          sed -i -E "s/V[0-9]+\.[0-9]+\.[0-9]+/V${VERSION}/g" "$MAIN"
 
           # Package must contain the plugin directory at ZIP root.
           cd build
@@ -62,5 +62,5 @@ jobs:
           git push -f origin "v${VERSION}"
           gh release create "v${VERSION}" "xe-dap-ninh-binh-v${VERSION}.zip" \
             --title "XE DAP NINH BINH v${VERSION}" \
-            --notes "## XE DAP NINH BINH v${VERSION}\n\n- Tích hợp luồng AI SEO trong importer.\n- AI chỉ viết lại nội dung; dữ liệu giá, SKU, thuộc tính, variation và ảnh lấy từ nguồn.\n- Sản phẩm nhập mới mặc định ở trạng thái Draft.\n- Lưu URL nguồn để chống nhập trùng.\n- Đóng gói ZIP đúng cấu trúc cho WordPress.\n- Tiếp tục hỗ trợ cập nhật từ GitHub." \
+            --notes "## XE DAP NINH BINH v${VERSION}\n\n- Hiển thị bộ đếm nhập sản phẩm màu xanh ở đầu trang.\n- Đếm riêng sản phẩm tạo thành công, sản phẩm bỏ qua và lỗi trong quá trình nhập.\n- Tích hợp luồng AI SEO trong importer.\n- AI chỉ viết lại nội dung; dữ liệu giá, SKU, thuộc tính, variation và ảnh lấy từ nguồn.\n- Sản phẩm nhập mới mặc định ở trạng thái Draft.\n- Lưu URL nguồn để chống nhập trùng.\n- Đóng gói ZIP đúng cấu trúc cho WordPress.\n- Tiếp tục hỗ trợ cập nhật từ GitHub." \
             --latest
