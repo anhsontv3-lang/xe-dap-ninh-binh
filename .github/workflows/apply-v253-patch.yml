@@ -1,8 +1,9 @@
-name: Apply V2.5.3 patch
+name: Apply V2.6 SEO patch
 
 on:
   push:
     paths:
+      - 'tools/v260_patch.py'
       - 'tools/v253_patch.py'
       - 'tools/v253_fix.py'
       - 'tools/v253_trigger.txt'
@@ -20,13 +21,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Apply patch
-        run: python3 tools/v253_patch.py
+      - name: Apply V2.6 patch
+        run: python3 tools/v260_patch.py
 
-      - name: Apply fixes
-        run: python3 tools/v253_fix.py
-
-      - name: Commit V2.5.3
+      - name: Commit V2.6
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -35,5 +33,5 @@ jobs:
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "Release V2.5.3 source update [skip ci]"
+          git commit -m "Release V2.6.0 SEO internal links and specs [skip ci]"
           git push
