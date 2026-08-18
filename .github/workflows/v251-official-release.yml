@@ -1,0 +1,150 @@
+name: Build official V2.5.1 release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish GitHub Release v2.5.1'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build clean V2.5.1 package
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build
+          mkdir -p build/xe-dap-ninh-binh
+          cp xe-dap-ninh-binh/xe-dap-ninh-binh.php build/xe-dap-ninh-binh/xe-dap-ninh-binh.php
+          MAIN=build/xe-dap-ninh-binh/xe-dap-ninh-binh.php
+
+          python3 - "$MAIN" <<'PY'
+          import re, sys
+          from pathlib import Path
+
+          p = Path(sys.argv[1])
+          s = p.read_text(encoding='utf-8')
+
+          s = re.sub(r'^ \* Version: .*$', ' * Version: 2.5.1', s, count=1, flags=re.M)
+          s = re.sub(r"const VERSION = '[^']+';", "const VERSION = '2.5.1';", s, count=1)
+          s = re.sub(r'V[0-9]+\.[0-9]+\.[0-9]+', 'V2.5.1', s)
+
+          migration = r'''
+
+/**
+ * V2.5.1 migration: remove legacy XE DAP NINH BINH modules after the
+ * official single-plugin package has replaced the old installation.
+ */
+function xdn_v251_cleanup_legacy_plugins() {
+    if (get_option('xdn_v251_cleanup_done', false)) {
+        return;
+    }
+
+    if (!function_exists('get_plugins')) {
+        require_once ABSPATH . 'wp-admin/includes/plugin.php';
+    }
+
+    $self = plugin_basename(__FILE__);
+    $legacy_keywords = [
+        'Variation Guard',
+        'AI V2.5',
+        'AI Bridge',
+        'AI Product Importer',
+    ];
+
+    foreach ((array) get_plugins() as $plugin_file => $plugin_data) {
+        if ($plugin_file === $self) {
+            continue;
+        }
+
+        $name = (string) ($plugin_data['Name'] ?? '');
+        if (stripos($name, 'XE DAP NINH BINH') === false) {
+            continue;
+        }
+
+        $is_legacy = false;
+        foreach ($legacy_keywords as $keyword) {
+            if (stripos($name, $keyword) !== false) {
+                $is_legacy = true;
+                break;
+            }
+        }
+        if (!$is_legacy) {
+            continue;
+        }
+
+        if (is_plugin_active($plugin_file)) {
+            deactivate_plugins($plugin_file, true);
+        }
+
+        if (function_exists('delete_plugins') && current_user_can('delete_plugins')) {
+            delete_plugins([$plugin_file]);
+        }
+    }
+
+    update_option('xdn_v251_cleanup_done', 1, false);
+}
+add_action('admin_init', 'xdn_v251_cleanup_legacy_plugins', 1);
+'''
+
+          marker = 'new XDN_AI_Product_Importer_V2();'
+          if marker not in s:
+              raise SystemExit('Cannot find plugin bootstrap marker')
+          if 'xdn_v251_cleanup_legacy_plugins' not in s:
+              s = s.replace(marker, migration + '\n' + marker, 1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
+          test "$(find build/xe-dap-ninh-binh -type f | wc -l)" -eq 1
+          test "$(find build/xe-dap-ninh-binh -type f -name '*.php' | wc -l)" -eq 1
+          grep -q 'Plugin Name: XE DAP NINH BINH' "$MAIN"
+          grep -q 'Version: 2.5.1' "$MAIN"
+          grep -q "const VERSION = '2.5.1';" "$MAIN"
+          grep -q 'xdn_v251_cleanup_legacy_plugins' "$MAIN"
+          grep -q 'Variation Guard' "$MAIN"
+          grep -q 'AI V2.5' "$MAIN"
+          grep -q 'AI Bridge' "$MAIN"
+          grep -q 'AI Product Importer' "$MAIN"
+          php -l "$MAIN"
+
+          cd build
+          zip -r ../xe-dap-ninh-binh-v2.5.1.zip xe-dap-ninh-binh >/dev/null
+          cd ..
+
+          unzip -l xe-dap-ninh-binh-v2.5.1.zip
+          test "$(unzip -Z1 xe-dap-ninh-binh-v2.5.1.zip | grep -v '/$' | wc -l)" -eq 1
+          unzip -p xe-dap-ninh-binh-v2.5.1.zip xe-dap-ninh-binh/xe-dap-ninh-binh.php | grep -q 'Version: 2.5.1'
+          unzip -p xe-dap-ninh-binh-v2.5.1.zip xe-dap-ninh-binh/xe-dap-ninh-binh.php | php -l
+
+      - name: Upload test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: xe-dap-ninh-binh-v2.5.1
+          path: xe-dap-ninh-binh-v2.5.1.zip
+          if-no-files-found: error
+
+      - name: Publish official V2.5.1 release
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release delete v2.5.1 --yes 2>/dev/null || true
+          git tag -f v2.5.1 HEAD
+          git push -f origin v2.5.1
+          gh release create v2.5.1 xe-dap-ninh-binh-v2.5.1.zip \
+            --title 'XE DAP NINH BINH v2.5.1' \
+            --notes 'Official V2.5.1 single-plugin release. The ZIP contains only xe-dap-ninh-binh/xe-dap-ninh-binh.php. On the first WordPress admin load it deactivates and removes legacy XE DAP NINH BINH Variation Guard / AI V2.5 / AI Bridge / AI Product Importer modules, while preserving the main plugin.' \
+            --latest
