@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Plugin version, for example 2.4.0'
+        description: 'Plugin version, for example 2.5.1'
         required: true
-        default: '2.4.0'
+        default: '2.5.1'
 
 permissions:
   contents: write
@@ -35,27 +35,22 @@ jobs:
 
           MAIN="build/xe-dap-ninh-binh/xe-dap-ninh-binh.php"
 
-          # Package version is controlled by the release input.
           sed -i -E "s/^ \* Version: .*/ * Version: ${VERSION}/" "$MAIN"
           sed -i -E "s/const VERSION = '[^']+';/const VERSION = '${VERSION}';/" "$MAIN"
-
-          # Tell WordPress that this custom GitHub update offer may be
-          # automatically installed. The plugin still uses its own
-          # Update URI + GitHub release package as the update source.
-          sed -i "s/'requires_php'=>'7.4'/'requires_php'=>'7.4','autoupdate'=>true/" "$MAIN"
-
-          # Keep the admin version label synchronized with the release.
           sed -i -E "s/V2\.2\.1/V${VERSION}/g" "$MAIN"
 
-          # IMPORTANT: zip from inside build so the ZIP root is exactly
-          # xe-dap-ninh-binh/, which is the folder WordPress expects.
+          # Package must contain the plugin directory at ZIP root.
           cd build
           zip -r "../xe-dap-ninh-binh-v${VERSION}.zip" xe-dap-ninh-binh >/dev/null
           cd ..
 
           test -f "xe-dap-ninh-binh-v${VERSION}.zip"
-          unzip -l "xe-dap-ninh-binh-v${VERSION}.zip" | head -30
-          grep -E '^ \* Version:|const VERSION|autoupdate' "$MAIN"
+
+          # Fail the release if the package does not contain the main plugin file.
+          unzip -l "xe-dap-ninh-binh-v${VERSION}.zip" | grep -q "xe-dap-ninh-binh/xe-dap-ninh-binh.php"
+
+          # Verify the version that will actually be installed.
+          unzip -p "xe-dap-ninh-binh-v${VERSION}.zip" "xe-dap-ninh-binh/xe-dap-ninh-binh.php" | grep -E "^ \* Version: ${VERSION}|const VERSION = '${VERSION}'"
 
       - name: Create GitHub release
         env:
@@ -67,5 +62,5 @@ jobs:
           git push -f origin "v${VERSION}"
           gh release create "v${VERSION}" "xe-dap-ninh-binh-v${VERSION}.zip" \
             --title "XE DAP NINH BINH v${VERSION}" \
-            --notes "## XE DAP NINH BINH v${VERSION}\n\n- Cải thiện cơ chế cập nhật từ GitHub.\n- Cho phép WordPress tự động cập nhật plugin từ release package.\n- Giữ cấu trúc ZIP tương thích với WordPress.\n- Giữ nguyên dữ liệu cấu hình và chức năng importer hiện tại." \
+            --notes "## XE DAP NINH BINH v${VERSION}\n\n- Tích hợp luồng AI SEO trong importer.\n- AI chỉ viết lại nội dung; dữ liệu giá, SKU, thuộc tính, variation và ảnh lấy từ nguồn.\n- Sản phẩm nhập mới mặc định ở trạng thái Draft.\n- Lưu URL nguồn để chống nhập trùng.\n- Đóng gói ZIP đúng cấu trúc cho WordPress.\n- Tiếp tục hỗ trợ cập nhật từ GitHub." \
             --latest
