@@ -19,6 +19,7 @@ define( 'XDN_AI_URL', plugin_dir_url( __FILE__ ) );
 require_once XDN_AI_DIR . 'includes/class-openai.php';
 require_once XDN_AI_DIR . 'includes/class-gemini.php';
 require_once XDN_AI_DIR . 'includes/class-images.php';
+require_once XDN_AI_DIR . 'includes/class-image-settings.php';
 require_once XDN_AI_DIR . 'includes/class-admin.php';
 require_once XDN_AI_DIR . 'includes/class-content-hub.php';
 
@@ -27,6 +28,7 @@ final class XDN_AI_Content_Engine {
         XDN_AI_Admin::init();
         XDN_AI_Content_Hub::init();
         XDN_AI_Images::init();
+        XDN_AI_Image_Settings::init();
         add_action( 'xdn_ai_daily_research', array( __CLASS__, 'scheduled_research' ) );
     }
     public static function activate() {
