@@ -1,0 +1,42 @@
+name: V2.6.1 multi-category build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/v261_category_patch.py'
+      - '.github/workflows/v261-multi-category.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply V2.6.1 multi-category patch
+        run: python3 tools/v261_category_patch.py
+
+      - name: PHP syntax check
+        run: php -l xe-dap-ninh-binh/xe-dap-ninh-binh.php
+
+      - name: Verify version and multi-category support
+        run: |
+          grep -q 'Version: 2.6.1' xe-dap-ninh-binh/xe-dap-ninh-binh.php
+          grep -q "const VERSION = '2.6.1';" xe-dap-ninh-binh/xe-dap-ninh-binh.php
+          grep -q 'multiple size="4"' xe-dap-ninh-binh/xe-dap-ninh-binh.php
+          grep -q "fd.append('categories',JSON.stringify(selectedCats))" xe-dap-ninh-binh/xe-dap-ninh-binh.php
+          grep -q 'wp_set_object_terms($post_id,$categories' xe-dap-ninh-binh/xe-dap-ninh-binh.php
+
+      - name: Commit patched plugin and clean up helper files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -f tools/v261_category_patch.py .github/workflows/v261-multi-category.yml
+          git add xe-dap-ninh-binh/xe-dap-ninh-binh.php
+          git commit -m 'Release V2.6.1 multi-category importer [skip ci]'
+          git push
