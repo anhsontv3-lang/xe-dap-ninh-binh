@@ -1,100 +1,11 @@
 <?php
 if ( ! defined( 'ABSPATH' ) ) exit;
-
 class XDN_AI_Image {
-    public static function init() {
-        add_filter( 'wp_generate_attachment_metadata', array( __CLASS__, 'watermark_attachment' ), 20, 2 );
-    }
-
-    public static function watermark_attachment( $metadata, $attachment_id ) {
-        $settings = get_option( 'xdn_ai_settings', array() );
-        if ( empty( $settings['logo_id'] ) || empty( $settings['watermark_enabled'] ) ) return $metadata;
-        if ( (int) $settings['logo_id'] === (int) $attachment_id ) return $metadata;
-        if ( get_post_meta( $attachment_id, '_xdn_ai_logo_processed', true ) ) return $metadata;
-
-        $file = get_attached_file( $attachment_id );
-        if ( $file && self::apply_logo( $file, $settings ) ) {
-            if ( ! empty( $metadata['sizes'] ) ) {
-                $base = trailingslashit( dirname( $file ) );
-                foreach ( $metadata['sizes'] as $size ) {
-                    if ( empty( $size['file'] ) ) continue;
-                    self::apply_logo( $base . $size['file'], $settings );
-                }
-            }
-            update_post_meta( $attachment_id, '_xdn_ai_logo_processed', 1 );
-            if ( ! get_post_meta( $attachment_id, '_wp_attachment_image_alt', true ) ) {
-                $title = get_the_title( $attachment_id );
-                if ( $title ) update_post_meta( $attachment_id, '_wp_attachment_image_alt', sanitize_text_field( $title ) );
-            }
-        }
-        return $metadata;
-    }
-
-    public static function apply_logo( $image_path, $settings ) {
-        if ( ! $image_path || ! file_exists( $image_path ) || ! function_exists( 'imagecreatefrompng' ) ) return false;
-        $info = @getimagesize( $image_path );
-        if ( ! $info || empty( $info[2] ) ) return false;
-        $logo_path = get_attached_file( (int) $settings['logo_id'] );
-        if ( ! $logo_path || ! file_exists( $logo_path ) ) return false;
-        $img = self::load_image( $image_path, $info[2] );
-        if ( ! $img ) return false;
-        $li = @getimagesize( $logo_path );
-        if ( ! $li || ! $li[0] || ! $li[1] ) { imagedestroy($img); return false; }
-        $logo = self::load_image( $logo_path, $li[2] );
-        if ( ! $logo ) { imagedestroy($img); return false; }
-
-        $w = imagesx($img); $h = imagesy($img);
-        $ratio = max( 0.05, min( 0.30, (float) ($settings['logo_size'] ?? 12) / 100 ) );
-        $lw = max( 20, (int) round( $w * $ratio ) );
-        $lh = max( 20, (int) round( $lw * $li[1] / $li[0] ) );
-        $resized = imagecreatetruecolor($lw,$lh);
-        imagealphablending($resized,false); imagesavealpha($resized,true);
-        $transparent=imagecolorallocatealpha($resized,0,0,0,127); imagefill($resized,0,0,$transparent);
-        imagecopyresampled($resized,$logo,0,0,0,0,$lw,$lh,$li[0],$li[1]);
-
-        $margin = max( 5, (int) round($w * ((float)($settings['logo_margin'] ?? 2) / 100)) );
-        $pos = $settings['logo_position'] ?? 'bottom-right';
-        $x=$margin; $y=$h-$lh-$margin;
-        if($pos==='top-left'){ $x=$margin; $y=$margin; }
-        elseif($pos==='top-right'){ $x=$w-$lw-$margin; $y=$margin; }
-        elseif($pos==='bottom-left'){ $x=$margin; $y=$h-$lh-$margin; }
-        elseif($pos==='center'){ $x=(int)(($w-$lw)/2); $y=(int)(($h-$lh)/2); }
-        else { $x=$w-$lw-$margin; $y=$h-$lh-$margin; }
-        $opacity=max(0,min(100,(int)($settings['logo_opacity'] ?? 85)));
-        imagecopymerge($img,$resized,$x,$y,0,0,$lw,$lh,$opacity);
-        $ok=self::save_image($img,$image_path,$info[2]);
-        imagedestroy($resized); imagedestroy($logo); imagedestroy($img);
-        return $ok;
-    }
-
-    private static function load_image($path,$type){
-        if($type===IMAGETYPE_JPEG) return @imagecreatefromjpeg($path);
-        if($type===IMAGETYPE_PNG) return @imagecreatefrompng($path);
-        if(defined('IMAGETYPE_WEBP') && $type===IMAGETYPE_WEBP && function_exists('imagecreatefromwebp')) return @imagecreatefromwebp($path);
-        return false;
-    }
-    private static function save_image($img,$path,$type){
-        if($type===IMAGETYPE_JPEG) return @imagejpeg($img,$path,90);
-        if($type===IMAGETYPE_PNG) return @imagepng($img,$path,6);
-        if(defined('IMAGETYPE_WEBP') && $type===IMAGETYPE_WEBP && function_exists('imagewebp')) return @imagewebp($img,$path,90);
-        return false;
-    }
-
-    public static function process_existing_images(){
-        $settings=get_option('xdn_ai_settings',array());
-        if(empty($settings['logo_id']) || empty($settings['watermark_enabled'])) return 0;
-        $ids=get_posts(array('post_type'=>'attachment','post_mime_type'=>'image','post_status'=>'inherit','posts_per_page'=>-1,'fields'=>'ids','meta_query'=>array(array('key'=>'_xdn_ai_logo_processed','compare'=>'NOT EXISTS'))));
-        $count=0;
-        foreach($ids as $id){
-            if((int)$id===(int)$settings['logo_id']) continue;
-            $file=get_attached_file($id);
-            if($file && self::apply_logo($file,$settings)){
-                update_post_meta($id,'_xdn_ai_logo_processed',1);
-                $meta=wp_generate_attachment_metadata($id,$file);
-                if($meta) wp_update_attachment_metadata($id,$meta);
-                $count++;
-            }
-        }
-        return $count;
-    }
+ public static function init(){add_filter('wp_generate_attachment_metadata',array(__CLASS__,'watermark_attachment'),20,2);}
+ public static function watermark_attachment($metadata,$attachment_id){$s=get_option('xdn_ai_settings',array());if(empty($s['logo_id'])||empty($s['watermark_enabled'])||(int)$s['logo_id']===(int)$attachment_id||get_post_meta($attachment_id,'_xdn_ai_logo_processed',true))return $metadata;$f=get_attached_file($attachment_id);if($f&&self::apply_logo($f,$s)){if(!empty($metadata['sizes']))foreach($metadata['sizes'] as $size)if(!empty($size['file']))self::apply_logo(trailingslashit(dirname($f)).$size['file'],$s);update_post_meta($attachment_id,'_xdn_ai_logo_processed',1);if(!get_post_meta($attachment_id,'_wp_attachment_image_alt',true))update_post_meta($attachment_id,'_wp_attachment_image_alt',sanitize_text_field(get_the_title($attachment_id)));}return $metadata;}
+ public static function apply_logo($p,$s){if(!$p||!file_exists($p))return false;$i=@getimagesize($p);$lp=get_attached_file((int)$s['logo_id']);if(!$i||!$lp||!file_exists($lp))return false;$im=self::load($p,$i[2]);$li=@getimagesize($lp);$lg=self::load($lp,$li[2]);if(!$im||!$lg||empty($li[0])||empty($li[1])){if($im)imagedestroy($im);if($lg)imagedestroy($lg);return false;}$w=imagesx($im);$h=imagesy($im);$lw=max(20,(int)round($w*max(.05,min(.3,(float)($s['logo_size']??12)/100))));$lh=max(20,(int)round($lw*$li[1]/$li[0]));$r=imagecreatetruecolor($lw,$lh);imagealphablending($r,false);imagesavealpha($r,true);imagefill($r,0,0,imagecolorallocatealpha($r,0,0,0,127));imagecopyresampled($r,$lg,0,0,0,0,$lw,$lh,$li[0],$li[1]);$m=max(5,(int)round($w*((float)($s['logo_margin']??2)/100)));$pos=$s['logo_position']??'bottom-right';$x=$w-$lw-$m;$y=$h-$lh-$m;if($pos==='top-left'){$x=$m;$y=$m;}elseif($pos==='top-right')$y=$m;elseif($pos==='bottom-left')$x=$m;elseif($pos==='center'){$x=(int)(($w-$lw)/2);$y=(int)(($h-$lh)/2);}imagecopymerge($im,$r,$x,$y,0,0,$lw,$lh,max(0,min(100,(int)($s['logo_opacity']??85))));$ok=self::save($im,$p,$i[2]);imagedestroy($r);imagedestroy($lg);imagedestroy($im);return $ok;}
+ private static function load($p,$t){if($t===IMAGETYPE_JPEG)return @imagecreatefromjpeg($p);if($t===IMAGETYPE_PNG)return @imagecreatefrompng($p);if(defined('IMAGETYPE_WEBP')&&$t===IMAGETYPE_WEBP&&function_exists('imagecreatefromwebp'))return @imagecreatefromwebp($p);return false;}
+ private static function save($im,$p,$t){if($t===IMAGETYPE_JPEG)return @imagejpeg($im,$p,90);if($t===IMAGETYPE_PNG)return @imagepng($im,$p,6);if(defined('IMAGETYPE_WEBP')&&$t===IMAGETYPE_WEBP&&function_exists('imagewebp'))return @imagewebp($im,$p,90);return false;}
+ public static function process_existing_images(){$s=get_option('xdn_ai_settings',array());if(empty($s['logo_id'])||empty($s['watermark_enabled']))return 0;$ids=get_posts(array('post_type'=>'attachment','post_mime_type'=>'image','post_status'=>'inherit','posts_per_page'=>-1,'fields'=>'ids','meta_query'=>array(array('key'=>'_xdn_ai_logo_processed','compare'=>'NOT EXISTS'))));$n=0;foreach($ids as $id){if((int)$id===(int)$s['logo_id'])continue;$f=get_attached_file($id);if($f&&self::apply_logo($f,$s)){update_post_meta($id,'_xdn_ai_logo_processed',1);$n++;}}return $n;}
+ public static function resolve_post_images($post_id,$image_specs,$s=array()){if(empty($image_specs)||!is_array($image_specs))return 0;require_once ABSPATH.'wp-admin/includes/file.php';require_once ABSPATH.'wp-admin/includes/media.php';require_once ABSPATH.'wp-admin/includes/image.php';$content=get_post_field('post_content',$post_id);$done=0;foreach($image_specs as $spec){$d=is_array($spec)?sanitize_text_field($spec['description']??''):sanitize_text_field($spec);$url=is_array($spec)?esc_url_raw($spec['url']??''):'';if(!$d||!$url)continue;$tmp=download_url($url,45);if(is_wp_error($tmp))continue;$ext=pathinfo(parse_url($url,PHP_URL_PATH),PATHINFO_EXTENSION);$file=array('name'=>sanitize_title($d).($ext?'.'.sanitize_file_name($ext):'.jpg'),'tmp_name'=>$tmp);$id=media_handle_sideload($file,$post_id,$d,array('post_excerpt'=>$d));if(is_wp_error($id)){@unlink($tmp);continue;}update_post_meta($id,'_xdn_ai_generated_image',1);if(!empty($s['logo_id']))self::apply_logo(get_attached_file($id),$s);$img=wp_get_attachment_image($id,'large',false,array('alt'=>$d,'loading'=>'lazy'));if($img){$content=str_replace('<!-- XDN_IMAGE: '.$d.' -->',$img,$content);$done++;}}if($done)wp_update_post(array('ID'=>$post_id,'post_content'=>$content));return $done;}
 }
