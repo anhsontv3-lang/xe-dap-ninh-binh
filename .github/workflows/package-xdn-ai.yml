@@ -1,0 +1,23 @@
+name: Package XDN AI Content
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package plugin
+        run: |
+          mkdir -p /tmp/package/xdn-ai-content
+          cp -R xdn-ai-content/. /tmp/package/xdn-ai-content/
+          cd /tmp/package
+          zip -r "$GITHUB_WORKSPACE/xdn-ai-content.zip" xdn-ai-content
+      - name: Upload plugin ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: xdn-ai-content
+          path: xdn-ai-content.zip
+          if-no-files-found: error
