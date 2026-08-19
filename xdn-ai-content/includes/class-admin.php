@@ -7,6 +7,9 @@ class XDN_AI_Admin {
         add_action( 'admin_init', array( __CLASS__, 'register_settings' ) );
         add_action( 'wp_ajax_xdn_ai_research', array( __CLASS__, 'ajax_research' ) );
         add_action( 'wp_ajax_xdn_ai_write', array( __CLASS__, 'ajax_write' ) );
+        add_action( 'wp_ajax_xdn_ai_publish', array( __CLASS__, 'ajax_publish' ) );
+        add_action( 'wp_ajax_xdn_ai_schedule', array( __CLASS__, 'ajax_schedule' ) );
+        add_action( 'wp_ajax_xdn_ai_posts', array( __CLASS__, 'ajax_posts' ) );
     }
 
     public static function menu() {
@@ -21,6 +24,7 @@ class XDN_AI_Admin {
 
     public static function sanitize_settings( $input ) {
         $old = get_option( 'xdn_ai_settings', array() );
+        $input = is_array( $input ) ? $input : array();
         $out = array();
         $out['openai_key'] = isset( $input['openai_key'] ) && $input['openai_key'] !== '' ? sanitize_text_field( $input['openai_key'] ) : ( $old['openai_key'] ?? '' );
         $out['gemini_key'] = isset( $input['gemini_key'] ) && $input['gemini_key'] !== '' ? sanitize_text_field( $input['gemini_key'] ) : ( $old['gemini_key'] ?? '' );
@@ -33,80 +37,91 @@ class XDN_AI_Admin {
 
     private static function settings() { return get_option( 'xdn_ai_settings', array() ); }
 
+    private static function nonce() { return wp_create_nonce( 'xdn_ai_nonce' ); }
+
     public static function dashboard() {
-        $last = get_option( 'xdn_ai_last_research', array() );
-        echo '<div class="wrap"><h1>XDN AI Content Engine</h1>';
-        echo '<p>Trung tâm nghiên cứu SEO và tạo nội dung AI cho xedapninhbinh.com.</p>';
-        echo '<p><a class="button button-primary" href="' . esc_url( admin_url('admin.php?page=xdn-ai-research') ) . '">🔍 Tìm cơ hội SEO</a> <a class="button" href="' . esc_url( admin_url('admin.php?page=xdn-ai-settings') ) . '">⚙ Cài đặt API</a></p>';
-        echo '<hr><h2>Nghiên cứu gần nhất</h2>';
-        if ( $last ) {
-            echo '<p><strong>Chủ đề:</strong> ' . esc_html( $last['topic'] ?? '' ) . '</p>';
-            if ( ! empty( $last['keyword_opportunities'] ) ) {
-                echo '<table class="widefat striped"><thead><tr><th>Keyword</th><th>Intent</th><th>Ưu tiên</th><th>Lý do</th></tr></thead><tbody>';
-                foreach ( $last['keyword_opportunities'] as $row ) {
-                    echo '<tr><td>' . esc_html($row['keyword'] ?? '') . '</td><td>' . esc_html($row['intent'] ?? '') . '</td><td>' . esc_html($row['priority'] ?? '') . '</td><td>' . esc_html($row['reason'] ?? '') . '</td></tr>';
-                }
-                echo '</tbody></table>';
-            }
-        } else echo '<p>Chưa có dữ liệu. Hãy chạy nghiên cứu đầu tiên.</p>';
+        echo '<div class="wrap"><h1>🚲 XDN AI Content Engine <small style="font-size:13px;font-weight:400;">v' . esc_html( XDN_AI_VERSION ) . '</small></h1>';
+        echo '<p>Trung tâm nghiên cứu SEO, tạo bài, quản lý bài viết và đặt lịch đăng cho xedapninhbinh.com.</p>';
+        echo '<p><a class="button button-primary" href="' . esc_url( admin_url('admin.php?page=xdn-ai-research') ) . '">🔍 AI SEO Research</a> <a class="button" href="' . esc_url( admin_url('admin.php?page=xdn-ai-settings') ) . '">⚙ Cài đặt API</a></p>';
+        echo '<hr><h2>📚 Bài viết XDN đã tạo</h2>';
+        self::render_posts_table( 30 );
         echo '</div>';
+    }
+
+    private static function render_posts_table( $limit = 30 ) {
+        $posts = self::get_xdn_posts( $limit );
+        if ( empty( $posts ) ) {
+            echo '<p>Chưa có bài viết nào được tạo bởi XDN AI.</p>';
+            return;
+        }
+        echo '<table class="widefat striped" id="xdn-posts-table"><thead><tr><th style="width:45px">#</th><th>Tiêu đề</th><th>Keyword</th><th>Trạng thái</th><th>Ngày</th><th style="width:330px">Thao tác</th></tr></thead><tbody>';
+        foreach ( $posts as $i => $post ) {
+            echo self::post_row_html( $post, $i + 1 );
+        }
+        echo '</tbody></table>';
+    }
+
+    private static function get_xdn_posts( $limit = 30 ) {
+        return get_posts( array(
+            'post_type'      => 'post',
+            'post_status'    => array( 'draft', 'future', 'publish', 'pending', 'private' ),
+            'posts_per_page' => absint( $limit ),
+            'meta_key'       => '_xdn_ai_created',
+            'meta_value'     => '1',
+            'orderby'        => 'date',
+            'order'          => 'DESC',
+        ) );
+    }
+
+    private static function post_row_html( $post, $number ) {
+        $status = get_post_status( $post );
+        $status_labels = array(
+            'draft'   => 'Bản nháp',
+            'future'  => 'Đã đặt lịch',
+            'publish' => 'Đã đăng',
+            'pending' => 'Chờ duyệt',
+            'private' => 'Riêng tư',
+        );
+        $status_label = $status_labels[ $status ] ?? $status;
+        $keyword = get_post_meta( $post->ID, '_xdn_ai_focus_keyword', true );
+        $edit = get_edit_post_link( $post->ID, '' );
+        $date = get_post_time( 'd/m/Y H:i', true, $post );
+        $row = '<tr data-post-id="' . absint( $post->ID ) . '">';
+        $row .= '<td>' . absint( $number ) . '</td>';
+        $row .= '<td><strong><a href="' . esc_url( $edit ) . '">' . esc_html( get_the_title( $post ) ?: '(Chưa có tiêu đề)' ) . '</a></strong></td>';
+        $row .= '<td>' . esc_html( $keyword ) . '</td>';
+        $row .= '<td>' . esc_html( $status_label ) . '</td>';
+        $row .= '<td>' . esc_html( $date ) . '</td>';
+        $row .= '<td><a class="button" href="' . esc_url( $edit ) . '">✏ Sửa</a> ';
+        if ( 'publish' !== $status ) {
+            $row .= '<button type="button" class="button xdn-publish" data-id="' . absint( $post->ID ) . '">🚀 Đăng luôn</button> ';
+            $row .= '<input type="datetime-local" class="xdn-schedule-date" style="width:185px" value=""> ';
+            $row .= '<button type="button" class="button xdn-schedule" data-id="' . absint( $post->ID ) . '">📅 Đặt lịch</button>';
+        }
+        $row .= '</td></tr>';
+        return $row;
     }
 
     public static function research_page() {
         $settings = self::settings();
-        $nonce = wp_create_nonce( 'xdn_ai_nonce' );
-        echo '<div class="wrap"><h1>AI SEO Research</h1><p>Gemini sẽ dùng Google Search Grounding để nghiên cứu dữ liệu web hiện tại.</p>';
+        $nonce = self::nonce();
+        echo '<div class="wrap"><h1>🔎 AI SEO Research <small style="font-size:13px;font-weight:400;">v' . esc_html( XDN_AI_VERSION ) . '</small></h1>';
+        echo '<p>Gemini nghiên cứu dữ liệu web; mỗi cơ hội SEO có thể tạo bài, đăng ngay hoặc đặt lịch.</p>';
         echo '<table class="form-table"><tr><th><label for="xdn-topic">Chủ đề gốc</label></th><td><input id="xdn-topic" type="text" class="regular-text" value="' . esc_attr($settings['seed_topic'] ?? 'xe đạp Ninh Bình') . '"></td></tr></table>';
         echo '<p><button id="xdn-research" class="button button-primary">🔍 Tìm cơ hội SEO</button> <span id="xdn-status"></span></p>';
         echo '<div id="xdn-result"></div>';
-        echo '<script>window.XDN_AI={ajax:"' . esc_js(admin_url('admin-ajax.php')) . '",nonce:"' . esc_js($nonce) . '"};</script>';
-        echo '<script>(function(){const b=document.getElementById("xdn-research"),s=document.getElementById("xdn-status"),r=document.getElementById("xdn-result");b.addEventListener("click",function(){b.disabled=true;s.textContent=" Đang nghiên cứu Google...";const f=new FormData();f.append("action","xdn_ai_research");f.append("nonce",XDN_AI.nonce);f.append("topic",document.getElementById("xdn-topic").value);fetch(XDN_AI.ajax,{method:"POST",body:f}).then(x=>x.json()).then(j=>{b.disabled=false;if(!j.success){s.textContent=" Lỗi: "+j.data;return;}s.textContent=" Hoàn tất";let h="<h2>Keyword opportunities</h2><table class=\"widefat striped\"><thead><tr><th>Keyword</th><th>Intent</th><th>Priority</th><th>Reason</th></tr></thead><tbody>";(j.data.keyword_opportunities||[]).forEach(x=>{h+="<tr><td>"+(x.keyword||"")+"</td><td>"+(x.intent||"")+"</td><td>"+(x.priority||"")+"</td><td>"+(x.reason||"")+"</td></tr>"});h+="</tbody></table>";h+="<h2>Content gaps</h2><ul>";(j.data.content_gaps||[]).forEach(x=>h+="<li>"+x+"</li>");h+="</ul><h2>Tiêu đề đề xuất</h2><ol>";(j.data.recommended_titles||[]).forEach(x=>h+="<li>"+x+"</li>");h+="</ol>";r.innerHTML=h;}).catch(e=>{b.disabled=false;s.textContent=" Lỗi kết nối";});});})();</script></div>';
+        echo '<hr><h2>📚 Danh sách bài XDN đã tạo</h2><div id="xdn-post-list">';
+        self::render_posts_table( 30 );
+        echo '</div>';
+        echo '<script>window.XDN_AI=' . wp_json_encode( array( 'ajax'=>admin_url('admin-ajax.php'), 'nonce'=>$nonce, 'version'=>XDN_AI_VERSION ) ) . ';</script>';
+        self::inline_js();
+        echo '</div>';
     }
 
-    public static function settings_page() {
-        $s = self::settings();
-        echo '<div class="wrap"><h1>Cài đặt XDN AI</h1><form method="post" action="options.php">';
-        settings_fields( 'xdn_ai_settings_group' );
-        echo '<table class="form-table">';
-        echo '<tr><th>OpenAI API Key</th><td><input type="password" name="xdn_ai_settings[openai_key]" class="regular-text" placeholder="Giữ trống để giữ key hiện tại"></td></tr>';
-        echo '<tr><th>OpenAI Model</th><td><input name="xdn_ai_settings[openai_model]" class="regular-text" value="' . esc_attr($s['openai_model'] ?? 'gpt-5.6-luna') . '"></td></tr>';
-        echo '<tr><th>Gemini API Key</th><td><input type="password" name="xdn_ai_settings[gemini_key]" class="regular-text" placeholder="Giữ trống để giữ key hiện tại"></td></tr>';
-        echo '<tr><th>Gemini Model</th><td><input name="xdn_ai_settings[gemini_model]" class="regular-text" value="' . esc_attr($s['gemini_model'] ?? 'gemini-3.6-flash') . '"></td></tr>';
-        echo '<tr><th>Chủ đề gốc</th><td><input name="xdn_ai_settings[seed_topic]" class="regular-text" value="' . esc_attr($s['seed_topic'] ?? 'xe đạp Ninh Bình') . '"></td></tr>';
-        echo '<tr><th>Tự nghiên cứu hàng ngày</th><td><label><input type="checkbox" name="xdn_ai_settings[auto_research]" value="1" ' . checked(!empty($s['auto_research']),true,false) . '> Bật</label></td></tr>';
-        echo '</table>'; submit_button('Lưu cài đặt'); echo '</form></div>';
-    }
-
-    public static function ajax_research() {
-        if ( ! current_user_can('manage_options') || ! check_ajax_referer('xdn_ai_nonce','nonce',false) ) wp_send_json_error('Không có quyền.');
-        $topic = sanitize_text_field( wp_unslash($_POST['topic'] ?? '') );
-        if ( ! $topic ) wp_send_json_error('Vui lòng nhập chủ đề.');
-        $result = XDN_AI_Gemini::research($topic, self::settings());
-        if ( is_wp_error($result) ) wp_send_json_error($result->get_error_message());
-        update_option('xdn_ai_last_research',$result,false);
-        update_option('xdn_ai_last_research_at',current_time('mysql'),false);
-        wp_send_json_success($result);
-    }
-
-    public static function ajax_write() {
-        if ( ! current_user_can('publish_posts') || ! check_ajax_referer('xdn_ai_nonce','nonce',false) ) wp_send_json_error('Không có quyền.');
-        $research = get_option('xdn_ai_last_research',array());
-        if ( ! $research ) wp_send_json_error('Chưa có nghiên cứu.');
-        $result = XDN_AI_OpenAI::write_article($research,self::settings());
-        if ( is_wp_error($result) ) wp_send_json_error($result->get_error_message());
-        $json = json_decode(trim($result),true);
-        if ( ! is_array($json) ) wp_send_json_error('GPT trả về dữ liệu không hợp lệ.');
-        $post_id = wp_insert_post(array(
-            'post_title' => sanitize_text_field($json['title'] ?? 'Bài viết AI'),
-            'post_name' => sanitize_title($json['slug'] ?? ($json['title'] ?? '')), 
-            'post_excerpt' => wp_kses_post($json['excerpt'] ?? ''),
-            'post_content' => wp_kses_post($json['content_html'] ?? ''),
-            'post_status' => 'draft',
-            'post_type' => 'post',
-        ), true);
-        if ( is_wp_error($post_id) ) wp_send_json_error($post_id->get_error_message());
-        update_post_meta($post_id,'_xdn_ai_focus_keyword',sanitize_text_field($json['focus_keyword'] ?? ''));
-        update_post_meta($post_id,'_xdn_ai_meta_description',sanitize_text_field($json['meta_description'] ?? ''));
-        wp_send_json_success(array('post_id'=>$post_id,'edit_url'=>get_edit_post_link($post_id,''),'data'=>$json));
-    }
-}
+    private static function inline_js() {
+        echo '<style>
+        #xdn-result table td,#xdn-result table th{vertical-align:top}.xdn-actions{min-width:330px}.xdn-actions button{margin:2px}.xdn-actions input{margin:2px}.xdn-ok{color:#168a16;font-weight:600}.xdn-error{color:#c00;font-weight:600}
+        </style>';
+        echo '<script>(function(){
+        const X=window.XDN_AI;
+        const esc=v=>String(v==null?"":v).replace(/[&<>\"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","":
