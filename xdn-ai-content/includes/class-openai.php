@@ -1,56 +1,7 @@
 <?php
-if ( ! defined( 'ABSPATH' ) ) exit;
-
-class XDN_AI_OpenAI {
-    public static function generate( $instruction, $settings = array() ) {
-        $key = ! empty( $settings['openai_key'] ) ? trim( $settings['openai_key'] ) : '';
-        $model = ! empty( $settings['openai_model'] ) ? sanitize_text_field( $settings['openai_model'] ) : 'gpt-5.6-luna';
-        if ( ! $key ) return new WP_Error( 'missing_openai_key', 'Chưa có OpenAI API key.' );
-
-        $body = array(
-            'model' => $model,
-            'input' => $instruction,
-        );
-
-        $response = wp_remote_post( 'https://api.openai.com/v1/responses', array(
-            'timeout' => 120,
-            'headers' => array(
-                'Content-Type' => 'application/json',
-                'Authorization' => 'Bearer ' . $key,
-            ),
-            'body' => wp_json_encode( $body ),
-        ) );
-
-        if ( is_wp_error( $response ) ) return $response;
-        $code = wp_remote_retrieve_response_code( $response );
-        $raw  = wp_remote_retrieve_body( $response );
-        $data = json_decode( $raw, true );
-        if ( $code < 200 || $code >= 300 ) {
-            return new WP_Error( 'openai_http_error', 'OpenAI API lỗi: ' . $code . ' ' . wp_strip_all_tags( $raw ) );
-        }
-
-        if ( ! empty( $data['output_text'] ) ) return $data['output_text'];
-
-        $text = '';
-        if ( ! empty( $data['output'] ) && is_array( $data['output'] ) ) {
-            foreach ( $data['output'] as $item ) {
-                if ( ! empty( $item['content'] ) && is_array( $item['content'] ) ) {
-                    foreach ( $item['content'] as $content ) {
-                        if ( isset( $content['text'] ) ) $text .= $content['text'];
-                    }
-                }
-            }
-        }
-        return $text ? $text : new WP_Error( 'openai_empty', 'OpenAI không trả về nội dung.' );
-    }
-
-    public static function write_article( $research, $settings = array() ) {
-        $site = home_url();
-        $prompt = "Bạn là biên tập viên SEO cho website {$site}, chuyên bán xe đạp tại Ninh Bình.\n\n" .
-            "Dữ liệu nghiên cứu từ Gemini/Google Search:\n" . wp_json_encode( $research, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT ) . "\n\n" .
-            "Viết một bài tiếng Việt nguyên bản, hữu ích cho người đọc, không sao chép đối thủ. Ưu tiên trải nghiệm thực tế, thông tin địa phương và ý định tìm kiếm. Không bịa giá, thông số, chính sách hoặc địa chỉ. Nếu thiếu dữ liệu thì ghi rõ cần bổ sung.\n\n" .
-            "Trả về JSON hợp lệ:\n" .
-            "{\"title\":string,\"slug\":string,\"excerpt\":string,\"focus_keyword\":string,\"meta_description\":string,\"content_html\":string,\"faq\":[{\"question\":string,\"answer\":string}]}";
-        return self::generate( $prompt, $settings );
-    }
+if(!defined('ABSPATH'))exit;
+class XDN_AI_OpenAI{
+ public static function generate($instruction,$settings=array()){$key=trim($settings['openai_key']??'');$model=sanitize_text_field($settings['openai_model']??'gpt-5.6-luna');if(!$key)return new WP_Error('missing_openai_key','Chưa có OpenAI API key.');$r=wp_remote_post('https://api.openai.com/v1/responses',array('timeout'=>120,'headers'=>array('Content-Type'=>'application/json','Authorization'=>'Bearer '.$key),'body'=>wp_json_encode(array('model'=>$model,'input'=>$instruction))));if(is_wp_error($r))return $r;$code=wp_remote_retrieve_response_code($r);$raw=wp_remote_retrieve_body($r);$d=json_decode($raw,true);if($code<200||$code>=300)return new WP_Error('openai_http_error','OpenAI API lỗi: '.$code.' '.wp_strip_all_tags($raw));if(!empty($d['output_text']))return $d['output_text'];$t='';if(!empty($d['output']))foreach($d['output'] as $o)if(!empty($o['content']))foreach($o['content'] as $c)if(isset($c['text']))$t.=$c['text'];return $t?:new WP_Error('openai_empty','OpenAI không trả về nội dung.');}
+ public static function collect_sources($s){$urls=!empty($s['source_urls'])&&is_array($s['source_urls'])?$s['source_urls']:array();$out=array();foreach($urls as $url){$url=esc_url_raw(trim($url));if(!$url)continue;$r=wp_remote_get($url,array('timeout'=>20,'redirection'=>3,'user-agent'=>'XDN-AI-Content/0.2'));if(is_wp_error($r))continue;$html=wp_remote_retrieve_body($r);if(!$html)continue;$title='';if(preg_match('/<title[^>]*>(.*?)<\/title>/is',$html,$m))$title=wp_strip_all_tags(html_entity_decode($m[1],ENT_QUOTES,'UTF-8'));$text=preg_replace('/\s+/u',' ',wp_strip_all_tags(html_entity_decode($html,ENT_QUOTES,'UTF-8')));$out[]=array('url'=>$url,'title'=>sanitize_text_field($title),'excerpt'=>mb_substr(trim($text),0,3500));if(count($out)>=5)break;}return $out;}
+ public static function write_article($research,$s=array()){$sources=self::collect_sources($s);$prompt="Bạn là biên tập viên SEO cho website ".home_url().", chuyên xe đạp tại Ninh Bình.\n\nDữ liệu nghiên cứu:\n".wp_json_encode($research,JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT)."\n\nNguồn tham khảo (chỉ nghiên cứu, không sao chép):\n".wp_json_encode($sources,JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT)."\n\nViết bài tiếng Việt nguyên bản, hữu ích, local SEO. Không bịa thông tin. Tự xác định vị trí thật sự cần ảnh minh họa và chèn marker <!-- XDN_IMAGE: mô tả ảnh -->. Với mỗi marker hãy tạo image_specs tương ứng. CHỈ dùng URL ảnh khi chắc chắn URL là ảnh trực tiếp và được phép sử dụng; nếu không có URL hợp lệ thì để url rỗng để hệ thống không tự lấy ảnh có bản quyền.\n\nTrả về JSON hợp lệ: {\"title\":string,\"slug\":string,\"excerpt\":string,\"focus_keyword\":string,\"meta_description\":string,\"content_html\":string,\"faq\":[{\"question\":string,\"answer\":string}],\"image_specs\":[{\"description\":string,\"url\":string}]}";return self::generate($prompt,$s);}
 }
