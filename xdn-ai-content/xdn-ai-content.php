@@ -2,8 +2,8 @@
 /**
  * Plugin Name: XDN AI Content Engine
  * Plugin URI: https://xedapninhbinh.com
- * Description: AI SEO research, Google Search-grounded research with Gemini, GPT content generation and WordPress scheduling for Xe Đạp Ninh Bình.
- * Version: 0.1.0
+ * Description: AI SEO research, content generation, post management and WordPress scheduling for Xe Đạp Ninh Bình.
+ * Version: 1.6.3-beta
  * Author: Xe Đạp Ninh Bình
  * Requires at least: 6.4
  * Requires PHP: 7.4
@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'XDN_AI_VERSION', '0.1.0' );
+define( 'XDN_AI_VERSION', '1.6.3-beta' );
 define( 'XDN_AI_FILE', __FILE__ );
 define( 'XDN_AI_DIR', plugin_dir_path( __FILE__ ) );
 define( 'XDN_AI_URL', plugin_dir_url( __FILE__ ) );
